@@ -1,14 +1,24 @@
 using System.Numerics;
+using System.Reflection;
 using BeastNav.Models;
 using BeastNav.Services;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
+using Dalamud.Utility;
 
 namespace BeastNav.Windows;
 
 public sealed class MainWindow : Window
 {
+    private const string OfuseUrl = "https://ofuse.me/rin0617";
+
+    private static readonly string VersionLabel =
+        Assembly.GetExecutingAssembly().GetName().Version is { } v
+            ? $"v{v.Major}.{v.Minor}.{v.Build}"
+            : "dev";
+
     private readonly Configuration configuration;
     private readonly BeastDataService beastData;
     private readonly BeastDestinationService destinations;
@@ -33,7 +43,7 @@ public sealed class MainWindow : Window
         Action<BeastDestination> teleport,
         Action saveConfiguration,
         Action syncBeastNote)
-        : base("BeastHelper###BeastHelperMain")
+        : base($"BeastHelper {VersionLabel}###BeastHelperMain")
     {
         this.configuration = configuration;
         this.beastData = beastData;
@@ -51,6 +61,14 @@ public sealed class MainWindow : Window
             MaximumSize = new Vector2(1400, 1000),
         };
         this.RespectCloseHotkey = true;
+
+        this.TitleBarButtons.Add(new TitleBarButton
+        {
+            Icon = FontAwesomeIcon.Heart,
+            IconOffset = new Vector2(2f, 1f),
+            Click = _ => Util.OpenLink(OfuseUrl),
+            ShowTooltip = () => ImGui.SetTooltip($"OFUSE で作者を応援する\n{OfuseUrl}"),
+        });
     }
 
     public override void Draw()

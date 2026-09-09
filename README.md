@@ -22,9 +22,9 @@ https://github.com/Rin-0617/BeastHelper/releases
 
 Current release:
 
-- Version: `0.1.0.0`
-- Tag: `v0.1.0`
-- Artifact: `BeastHelper-v0.1.0.zip`
+- Version: `0.1.1.0`
+- Tag: `v0.1.1`
+- Artifact: `BeastHelper-v0.1.1.zip`
 - Author: `Rin`
 - Repository owner: `Rin-0617`
 
