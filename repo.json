@@ -1,0 +1,23 @@
+[
+  {
+    "Author": "Rin",
+    "Name": "BeastHelper",
+    "InternalName": "BeastHelper",
+    "AssemblyVersion": "0.1.0.0",
+    "Description": "Navigate to known Beastmaster recruit enemies from Beast Log data.",
+    "ApplicableVersion": "any",
+    "RepoUrl": "https://github.com/Rin-0617/BeastHelper",
+    "DalamudApiLevel": 15,
+    "Punchline": "Navigate to known Beastmaster recruit enemies.",
+    "Tags": [
+      "beastmaster",
+      "navigation",
+      "vnavmesh"
+    ],
+    "IsHide": false,
+    "IsTestingExclusive": false,
+    "DownloadLinkInstall": "https://github.com/Rin-0617/BeastHelper/releases/download/v0.1.0/BeastHelper-v0.1.0.zip",
+    "DownloadLinkUpdate": "https://github.com/Rin-0617/BeastHelper/releases/download/v0.1.0/BeastHelper-v0.1.0.zip",
+    "LastUpdate": "1788997494"
+  }
+]
