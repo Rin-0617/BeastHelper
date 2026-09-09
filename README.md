@@ -7,13 +7,13 @@ Dalamud API 15 / .NET 10 plugin prototype for Beastmaster navigation.
 Add this custom repository URL in Dalamud's custom plugin repositories:
 
 ```text
-https://raw.githubusercontent.com/Rin-0617/BeastHelper/main/repo.json
+https://raw.githubusercontent.com/Rin-0617/BeastHelper/main/beasthelper.json
 ```
 
 After adding the repository, search for `BeastHelper` in Dalamud Plugin Installer
 and install it from the custom repository entry.
 
-The repository metadata is kept in `repo.json`. Release downloads are served from
+The repository metadata is kept in `beasthelper.json`. Release downloads are served from
 GitHub Releases:
 
 ```text
