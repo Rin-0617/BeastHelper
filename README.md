@@ -2,6 +2,34 @@
 
 Dalamud API 15 / .NET 10 plugin prototype for Beastmaster navigation.
 
+## Installation via Custom Repository
+
+Add this custom repository URL in Dalamud's custom plugin repositories:
+
+```text
+https://raw.githubusercontent.com/Rin-0617/BeastHelper/main/repo.json
+```
+
+After adding the repository, search for `BeastHelper` in Dalamud Plugin Installer
+and install it from the custom repository entry.
+
+The repository metadata is kept in `repo.json`. Release downloads are served from
+GitHub Releases:
+
+```text
+https://github.com/Rin-0617/BeastHelper/releases
+```
+
+Current release:
+
+- Version: `0.1.0.0`
+- Tag: `v0.1.0`
+- Artifact: `BeastHelper-v0.1.0.zip`
+- Author: `Rin`
+- Repository owner: `Rin-0617`
+
+## Development Status
+
 What is implemented:
 
 - Loads the patch-day `XBMPet` sheet through Lumina raw rows.
