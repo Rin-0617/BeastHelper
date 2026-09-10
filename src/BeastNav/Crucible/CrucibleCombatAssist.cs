@@ -39,6 +39,9 @@ public sealed unsafe class CrucibleCombatAssist
     private DateTime lastAttempt;
     private bool wrathRotationOn;
 
+    /// <summary>Short human status for the overlay, e.g. "firing 46921" or "no ready action".</summary>
+    public string Status { get; private set; } = "idle";
+
     public CrucibleCombatAssist(
         Configuration configuration,
         IObjectTable objectTable,
@@ -88,6 +91,7 @@ public sealed unsafe class CrucibleCombatAssist
                 this.wrathRotationOn = want;
             }
 
+            this.Status = want ? "WrathCombo rotation on" : "WrathCombo (out of combat)";
             var t = NearestLive(state);
             return t is null
                 ? CombatIntent.None
@@ -106,14 +110,24 @@ public sealed unsafe class CrucibleCombatAssist
             this.wrathRotationOn = false;
         }
 
+        if (!this.configuration.CrucibleAutoCombat)
+        {
+            this.Status = "off";
+            return CombatIntent.None;
+        }
+
         if (!want)
         {
-            return CombatIntent.None;
+            this.Status = suppressed ? "paused (dodge)" : "waiting for combat";
+            return NearestLive(state) is { } near
+                ? new CombatIntent { HasTarget = true, TargetPosition = near.Position, TargetDistance = near.Distance }
+                : CombatIntent.None;
         }
 
         var target = NearestLive(state);
         if (target is null)
         {
+            this.Status = "no enemy";
             return CombatIntent.None;
         }
 
@@ -132,6 +146,7 @@ public sealed unsafe class CrucibleCombatAssist
             || this.condition[ConditionFlag.BetweenAreas51]
             || this.condition[ConditionFlag.Casting])
         {
+            this.Status = "occupied";
             return intent;
         }
 
@@ -145,7 +160,13 @@ public sealed unsafe class CrucibleCombatAssist
 
         var actions = ActionManager.Instance();
         var hotbar = RaptureHotbarModule.Instance();
-        if (actions is null || hotbar is null || actions->AnimationLock > 0.1f)
+        if (actions is null || hotbar is null)
+        {
+            this.Status = "no ActionManager";
+            return intent;
+        }
+
+        if (actions->AnimationLock > 0.1f)
         {
             return intent;
         }
@@ -181,6 +202,7 @@ public sealed unsafe class CrucibleCombatAssist
                 if (status == 0)
                 {
                     actions->UseAction(ActionType.Action, id, target.GameObjectId);
+                    this.Status = $"firing {id}";
                     return intent with { InActionRange = true };
                 }
 
@@ -192,6 +214,7 @@ public sealed unsafe class CrucibleCombatAssist
             }
         }
 
+        this.Status = anyUsable ? "all on cooldown" : "nothing in range / on bar";
         intent = intent with { InActionRange = anyUsable };
         return intent;
     }

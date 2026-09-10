@@ -14,14 +14,23 @@ public sealed class CrucibleOverlay : Window
     private readonly Configuration configuration;
     private readonly CrucibleStateReader reader;
     private readonly CrucibleDecisionEngine engine;
+    private readonly CrucibleActuator actuator;
+    private readonly CrucibleCombatAssist combat;
 
-    public CrucibleOverlay(Configuration configuration, CrucibleStateReader reader, CrucibleDecisionEngine engine)
+    public CrucibleOverlay(
+        Configuration configuration,
+        CrucibleStateReader reader,
+        CrucibleDecisionEngine engine,
+        CrucibleActuator actuator,
+        CrucibleCombatAssist combat)
         : base("BeastHelper Crucible###BeastHelperCrucibleOverlay",
             ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize)
     {
         this.configuration = configuration;
         this.reader = reader;
         this.engine = engine;
+        this.actuator = actuator;
+        this.combat = combat;
         this.SizeConstraints = new WindowSizeConstraints
         {
             MinimumSize = new Vector2(240, 90),
@@ -57,6 +66,18 @@ public sealed class CrucibleOverlay : Window
         StatusLine("Combat Assist", state.InCrucible ? (state.InCombat ? "ACTIVE" : "STANDBY") : "IDLE");
         StatusLine("Auto Dodge", danger ? "ALERT" : "READY");
         StatusLine("Danger Detected", danger ? "YES" : "no", danger);
+
+        if (this.configuration.CrucibleAutoCombat || this.configuration.CrucibleAutoDodge || this.configuration.CrucibleAutoRoute)
+        {
+            ImGui.Separator();
+            var hp = state.HasPlayer ? $"{state.PlayerHpFraction:P0}" : "?";
+            var hpColour = state.PlayerHpFraction <= 0.4f ? Red : state.PlayerHpFraction <= 0.7f ? Yellow : Green;
+            ImGui.TextUnformatted("HP:");
+            ImGui.SameLine();
+            ImGui.TextColored(hpColour, hp);
+            StatusLine("  Combat", this.configuration.CrucibleAutoCombat ? this.combat.Status : "off");
+            StatusLine("  Move", (this.configuration.CrucibleAutoDodge || this.configuration.CrucibleAutoRoute) ? this.actuator.Status : "off");
+        }
 
         ImGui.Separator();
 

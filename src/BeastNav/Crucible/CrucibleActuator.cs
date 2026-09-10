@@ -56,9 +56,23 @@ public sealed class CrucibleActuator
 
     public MoveGoal Goal => this.goal;
 
+    /// <summary>Short human status for the overlay.</summary>
+    public string Status { get; private set; } = "off";
+
+    public int RouteIndex => this.waypointIndex;
+
     public void Tick(CrucibleState state, DodgePlan plan, CombatIntent combat)
     {
         var anyAuto = this.configuration.CrucibleAutoDodge || this.configuration.CrucibleAutoRoute;
+
+        // Safety: never drive a near-dead character anywhere.
+        if (state.HasPlayer && state.PlayerMaxHp > 0 && state.PlayerHpFraction <= 0.1f)
+        {
+            this.Halt("player critical");
+            this.Status = "halted (HP critical)";
+            return;
+        }
+
         if (!anyAuto
             || this.navmesh.HasActiveRequest
             || !state.InCrucible
@@ -68,6 +82,7 @@ public sealed class CrucibleActuator
             || this.condition[ConditionFlag.Unconscious])
         {
             this.Halt("not actionable");
+            this.Status = anyAuto ? "waiting" : "off";
             return;
         }
 
@@ -160,6 +175,14 @@ public sealed class CrucibleActuator
             this.goal = newGoal;
             this.log.Debug("[BeastHelper] Crucible autopilot: {Goal} → {Target}.", newGoal, to);
         }
+
+        this.Status = newGoal switch
+        {
+            MoveGoal.Dodge => "dodging",
+            MoveGoal.Approach => "closing on target",
+            MoveGoal.Route => $"route wp {this.waypointIndex + 1}",
+            _ => this.Status,
+        };
     }
 
     private void Halt(string why)
@@ -171,6 +194,7 @@ public sealed class CrucibleActuator
 
         this.goal = MoveGoal.None;
         this.navmesh.StopPath();
+        this.Status = why;
         this.log.Debug("[BeastHelper] Crucible autopilot: stop ({Why}).", why);
     }
 }
