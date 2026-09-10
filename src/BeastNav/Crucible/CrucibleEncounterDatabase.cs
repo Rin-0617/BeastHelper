@@ -27,7 +27,18 @@ public sealed class CrucibleEncounterDatabase
     /// never guess wrong about a named mechanic.
     /// </summary>
     private static readonly IReadOnlyDictionary<uint, KnownMechanic> KnownMechanics =
-        new Dictionary<uint, KnownMechanic>();
+        new Dictionary<uint, KnownMechanic>
+        {
+            // --- 闘獣練 第一盤 (territory 1339) — seeded from observed casts ---
+            // アビサルランス — 直線チャージ (castType 12, range 40)
+            [46876] = new(MechanicKind.LineAoe, "アビサルチャージ (直線)", RecommendationPriority.High, PositionHint.MoveAway),
+            // マイトリング・ピース — シルクスクリーン (直線レーザー)
+            [46909] = new(MechanicKind.LineAoe, "シルクスクリーン (直線)", RecommendationPriority.High, PositionHint.MoveAway),
+            // ナイト・ピース — テュムラス (範囲円 range 6)
+            [46866] = new(MechanicKind.GroundAoe, "テュムラス (範囲)", RecommendationPriority.High, PositionHint.MoveOutside),
+            // ベーンマイト・ピース — デッドリースラスト (対象への大ダメージ)
+            [46906] = new(MechanicKind.Tankbuster, "デッドリースラスト (被弾注意)", RecommendationPriority.Medium, PositionHint.None),
+        };
 
     public CrucibleEncounterDatabase(BeastDataService beastData, IDataManager dataManager, IPluginLog log)
     {
@@ -126,6 +137,7 @@ public enum MechanicKind
     Unknown,
     Raidwide,
     GroundAoe,
+    LineAoe,
     Gaze,
     Tankbuster,
     Cleave,

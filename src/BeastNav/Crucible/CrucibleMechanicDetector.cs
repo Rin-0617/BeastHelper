@@ -41,7 +41,7 @@ public sealed class CrucibleMechanicDetector
             ActionShape.CircleAoe => (MechanicKind.GroundAoe, PositionHint.MoveOutside),
             ActionShape.CircleAroundSelf => (MechanicKind.GroundAoe, PositionHint.MoveAway),
             ActionShape.Cone => (MechanicKind.Cleave, PositionHint.MoveBehind),
-            ActionShape.Line => (MechanicKind.Cleave, PositionHint.MoveAway),
+            ActionShape.Line => (MechanicKind.LineAoe, PositionHint.MoveAway),
             ActionShape.Donut => (MechanicKind.GroundAoe, PositionHint.MoveInside),
             _ => (MechanicKind.Unknown, PositionHint.None),
         };
@@ -61,6 +61,7 @@ public sealed class CrucibleMechanicDetector
         var severity = kind switch
         {
             MechanicKind.GroundAoe => RecommendationPriority.High,
+            MechanicKind.LineAoe => RecommendationPriority.High,
             MechanicKind.Cleave => enemy.CastTargetsPlayer ? RecommendationPriority.High : RecommendationPriority.Medium,
             MechanicKind.Tankbuster => RecommendationPriority.Medium,
             _ => RecommendationPriority.Low,
