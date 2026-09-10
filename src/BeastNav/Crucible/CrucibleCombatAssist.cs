@@ -1,3 +1,4 @@
+using System.Numerics;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects;
 using Dalamud.Plugin.Services;
@@ -46,33 +47,18 @@ public sealed unsafe class CrucibleCombatAssist
         this.log = log;
     }
 
-    public void Tick(CrucibleState state, bool dodging)
+    /// <summary>
+    /// Targets the nearest enemy and fires an action. Returns what it wants from
+    /// the movement brain: whether it has a target and whether that target is in
+    /// range of anything on the bar (if not, the autopilot should close the gap).
+    /// </summary>
+    public CombatIntent Tick(CrucibleState state, bool suppressed)
     {
-        if (!this.configuration.CrucibleAutoCombat || dodging)
+        if (!this.configuration.CrucibleAutoCombat || suppressed
+            || !state.InCrucible || !state.HasPlayer || !state.InCombat)
         {
-            return;
+            return CombatIntent.None;
         }
-
-        if (!state.InCrucible || !state.HasPlayer || !state.InCombat)
-        {
-            return;
-        }
-
-        if (this.condition[ConditionFlag.BetweenAreas]
-            || this.condition[ConditionFlag.BetweenAreas51]
-            || this.condition[ConditionFlag.Occupied38]
-            || this.condition[ConditionFlag.Casting])
-        {
-            return;
-        }
-
-        var now = DateTime.UtcNow;
-        if (now - this.lastAttempt < MinInterval)
-        {
-            return;
-        }
-
-        this.lastAttempt = now;
 
         var target = state.Enemies
             .Where(static enemy => enemy.CurrentHp > 0)
@@ -80,7 +66,7 @@ public sealed unsafe class CrucibleCombatAssist
             .FirstOrDefault();
         if (target is null)
         {
-            return;
+            return CombatIntent.None;
         }
 
         if (this.targetManager.Target?.GameObjectId != target.GameObjectId)
@@ -92,18 +78,31 @@ public sealed unsafe class CrucibleCombatAssist
             }
         }
 
+        var intent = new CombatIntent { HasTarget = true, TargetPosition = target.Position, TargetDistance = target.Distance };
+
+        if (this.condition[ConditionFlag.BetweenAreas]
+            || this.condition[ConditionFlag.BetweenAreas51]
+            || this.condition[ConditionFlag.Casting])
+        {
+            return intent;
+        }
+
+        var now = DateTime.UtcNow;
+        if (now - this.lastAttempt < MinInterval)
+        {
+            return intent;
+        }
+
+        this.lastAttempt = now;
+
         var actions = ActionManager.Instance();
-        if (actions is null || actions->AnimationLock > 0.1f)
-        {
-            return;
-        }
-
         var hotbar = RaptureHotbarModule.Instance();
-        if (hotbar is null)
+        if (actions is null || hotbar is null || actions->AnimationLock > 0.1f)
         {
-            return;
+            return intent;
         }
 
+        var anyUsable = false;
         for (var slot = 0u; slot < SlotCount; slot++)
         {
             var s = hotbar->GetSlotById(HotbarIndex, slot);
@@ -113,13 +112,40 @@ public sealed unsafe class CrucibleCombatAssist
             }
 
             var id = s->ApparentActionId;
-            if (id == 0 || actions->GetActionStatus(ActionType.Action, id, target.GameObjectId) != 0)
+            if (id == 0)
             {
                 continue;
             }
 
-            actions->UseAction(ActionType.Action, id, target.GameObjectId);
-            return;
+            var status = actions->GetActionStatus(ActionType.Action, id, target.GameObjectId);
+            if (status == 0)
+            {
+                actions->UseAction(ActionType.Action, id, target.GameObjectId);
+                return intent with { InActionRange = true };
+            }
+
+            // 566 = "target out of range"; anything else means it's just on cooldown.
+            if (status != 566)
+            {
+                anyUsable = true;
+            }
         }
+
+        intent = intent with { InActionRange = anyUsable };
+        return intent;
     }
+}
+
+public readonly record struct CombatIntent
+{
+    public static CombatIntent None => default;
+
+    public bool HasTarget { get; init; }
+
+    public Vector3 TargetPosition { get; init; }
+
+    public float TargetDistance { get; init; }
+
+    /// <summary>The target is in range of at least one bar action (no need to close in).</summary>
+    public bool InActionRange { get; init; }
 }

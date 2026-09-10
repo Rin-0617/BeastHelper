@@ -31,6 +31,10 @@ public sealed class Configuration : IPluginConfiguration
     // Combat automation (against the FFXIV ToS); off by default.
     public bool CrucibleAutoCombat { get; set; }
 
+    // EXPERIMENTAL. Walk the recorded route between packs. Needs a route recorded
+    // for the stage first (/beasthelper crucible record). Off by default.
+    public bool CrucibleAutoRoute { get; set; }
+
     // --- Manual "I don't need this pet" list (user controlled) ---------------
     // Toggled from the pet list. Never written by the bestiary sync.
     public List<uint> MarkedPetRowIds { get; set; } = [];

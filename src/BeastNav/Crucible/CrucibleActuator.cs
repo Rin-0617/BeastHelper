@@ -6,111 +6,179 @@ using Dalamud.Plugin.Services;
 namespace BeastNav.Crucible;
 
 /// <summary>
-/// The opt-in movement actuator. While a dangerous cast is up it walks the
-/// character to the dodge solver's safe point (straight-line, via vnavmesh's
-/// path follower), then stops.
+/// The movement brain for the Crucible autopilot. Every tick it picks one goal
+/// in priority order — dodge a cast, close on the combat target, or advance
+/// along the recorded route — and walks the character there via vnavmesh's path
+/// follower. Nothing else in BeastHelper moves the character while this runs.
 /// </summary>
 /// <remarks>
-/// This is automation of movement in combat. It is off by default and gated
-/// behind <see cref="Configuration.CrucibleAutoDodge"/>. It never runs while a
-/// BeastHelper travel move is active or while the player is not in control.
+/// In-combat / route movement automation, against the FFXIV ToS. Gated behind
+/// <see cref="Configuration.CrucibleAutoDodge"/> (dodge) and
+/// <see cref="Configuration.CrucibleAutoRoute"/> (travel); both off by default.
+/// Never runs during a BeastHelper destination move.
 /// </remarks>
 public sealed class CrucibleActuator
 {
-    private const float ArriveDistance = 1.5f;
-    private const float RetargetDistance = 2f;
-    private static readonly TimeSpan MaxDodge = TimeSpan.FromSeconds(6);
-    private static readonly TimeSpan ReissueInterval = TimeSpan.FromMilliseconds(350);
+    private const float DodgeArrive = 1.5f;
+    private const float MeleeRange = 3.5f;
+    private const float WaypointArrive = 3f;
+    private const float EngageRange = 20f;
+    private static readonly TimeSpan Reissue = TimeSpan.FromMilliseconds(350);
+    private static readonly TimeSpan DodgeTimeout = TimeSpan.FromSeconds(6);
 
     private readonly Configuration configuration;
     private readonly NavmeshService navmesh;
+    private readonly CrucibleRoute route;
     private readonly ICondition condition;
     private readonly IPluginLog log;
 
-    private bool dodging;
+    private MoveGoal goal = MoveGoal.None;
     private Vector3 target;
     private DateTime lastIssue;
     private DateTime dodgeUntil;
+    private int waypointIndex;
 
-    public CrucibleActuator(Configuration configuration, NavmeshService navmesh, ICondition condition, IPluginLog log)
+    public CrucibleActuator(
+        Configuration configuration,
+        NavmeshService navmesh,
+        CrucibleRoute route,
+        ICondition condition,
+        IPluginLog log)
     {
         this.configuration = configuration;
         this.navmesh = navmesh;
+        this.route = route;
         this.condition = condition;
         this.log = log;
     }
 
-    public bool IsDodging => this.dodging;
+    public bool IsDodging => this.goal == MoveGoal.Dodge;
 
-    public void Tick(CrucibleState state, DodgePlan plan)
+    public MoveGoal Goal => this.goal;
+
+    public void Tick(CrucibleState state, DodgePlan plan, CombatIntent combat)
     {
-        if (!this.configuration.CrucibleAutoDodge)
-        {
-            this.Cancel("disabled");
-            return;
-        }
-
-        if (this.navmesh.HasActiveRequest
+        var anyAuto = this.configuration.CrucibleAutoDodge || this.configuration.CrucibleAutoRoute;
+        if (!anyAuto
+            || this.navmesh.HasActiveRequest
             || !state.InCrucible
             || !state.HasPlayer
             || this.condition[ConditionFlag.BetweenAreas]
             || this.condition[ConditionFlag.BetweenAreas51]
             || this.condition[ConditionFlag.Unconscious])
         {
-            this.Cancel("not actionable");
+            this.Halt("not actionable");
             return;
         }
 
         var now = DateTime.UtcNow;
 
-        if (plan.ShouldMove && !plan.NoSafeSpot)
+        // 1 — dodge.
+        if (this.configuration.CrucibleAutoDodge && plan.ShouldMove && !plan.NoSafeSpot)
         {
-            var moved = plan.TargetXZ;
-            var retarget = !this.dodging || Vector3.Distance(moved, this.target) > RetargetDistance;
-            if (retarget || now - this.lastIssue >= ReissueInterval)
-            {
-                this.target = moved;
-                this.navmesh.WalkDirectlyTo(moved);
-                this.lastIssue = now;
-            }
-
-            if (!this.dodging)
-            {
-                this.dodging = true;
-                this.dodgeUntil = now + MaxDodge;
-                this.log.Information(
-                    "[BeastHelper] Crucible auto-dodge → {Target} ({Threats} threat(s), {Sec:0.0}s left).",
-                    moved,
-                    plan.ThreatCount,
-                    plan.SecondsLeft);
-            }
-
+            this.Drive(MoveGoal.Dodge, plan.TargetXZ, now);
+            this.dodgeUntil = this.goal == MoveGoal.Dodge && this.dodgeUntil > now ? this.dodgeUntil : now + DodgeTimeout;
             return;
         }
 
-        if (this.dodging)
+        if (this.goal == MoveGoal.Dodge)
         {
-            var arrived = Vector3.Distance(state.PlayerPosition, this.target) <= ArriveDistance;
-            if (arrived || now >= this.dodgeUntil)
+            var arrived = Vector3.Distance(state.PlayerPosition, this.target) <= DodgeArrive;
+            if (!arrived && now < this.dodgeUntil && plan.ShouldMove)
             {
-                this.Cancel(arrived ? "arrived" : "timeout");
+                return; // still resolving
             }
-            else
-            {
-                this.Cancel("clear");
-            }
+
+            this.Halt(arrived ? "dodge arrived" : "dodge clear");
         }
+
+        // 2 — close on the combat target.
+        if (combat.HasTarget && !combat.InActionRange && combat.TargetDistance > MeleeRange)
+        {
+            this.Drive(MoveGoal.Approach, combat.TargetPosition, now);
+            return;
+        }
+
+        // Standing and fighting — hold position.
+        if (combat.HasTarget || this.NearbyEnemy(state))
+        {
+            this.Halt("in combat");
+            return;
+        }
+
+        // 3 — follow the route to the next pack.
+        if (this.configuration.CrucibleAutoRoute && !state.InCombat)
+        {
+            this.FollowRoute(state, now);
+            return;
+        }
+
+        this.Halt("idle");
     }
 
-    private void Cancel(string why)
+    private void FollowRoute(CrucibleState state, DateTime now)
     {
-        if (!this.dodging)
+        this.route.EnsureLoaded(state.TerritoryId);
+        var points = this.route.Waypoints;
+        if (points.Count == 0)
+        {
+            this.Halt("no route");
+            return;
+        }
+
+        // Advance past any waypoints we're already at or behind.
+        while (this.waypointIndex < points.Count
+               && Vector3.Distance(state.PlayerPosition, points[this.waypointIndex]) <= WaypointArrive)
+        {
+            this.waypointIndex++;
+        }
+
+        if (this.waypointIndex >= points.Count)
+        {
+            this.Halt("route complete");
+            return;
+        }
+
+        this.Drive(MoveGoal.Route, points[this.waypointIndex], now);
+    }
+
+    private bool NearbyEnemy(CrucibleState state)
+        => state.Enemies.Any(e => e.CurrentHp > 0 && e.Distance <= EngageRange);
+
+    private void Drive(MoveGoal newGoal, Vector3 to, DateTime now)
+    {
+        var changed = this.goal != newGoal || Vector3.Distance(to, this.target) > 2f;
+        if (changed || now - this.lastIssue >= Reissue)
+        {
+            this.navmesh.WalkDirectlyTo(to);
+            this.target = to;
+            this.lastIssue = now;
+        }
+
+        if (this.goal != newGoal)
+        {
+            this.goal = newGoal;
+            this.log.Debug("[BeastHelper] Crucible autopilot: {Goal} → {Target}.", newGoal, to);
+        }
+    }
+
+    private void Halt(string why)
+    {
+        if (this.goal == MoveGoal.None)
         {
             return;
         }
 
-        this.dodging = false;
+        this.goal = MoveGoal.None;
         this.navmesh.StopPath();
-        this.log.Debug("[BeastHelper] Crucible auto-dodge stopped ({Why}).", why);
+        this.log.Debug("[BeastHelper] Crucible autopilot: stop ({Why}).", why);
     }
+}
+
+public enum MoveGoal
+{
+    None,
+    Dodge,
+    Approach,
+    Route,
 }
