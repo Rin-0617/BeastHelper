@@ -21,6 +21,10 @@ public sealed class CrucibleDodgeSolver
     private const float DefaultLineHalfWidth = 3f;
     private const float DefaultConeHalfAngle = 1.0f; // ~57 degrees
 
+    // A circle bigger than this can't be walked out of in an arena — treat it as
+    // a raidwide: still shown, but not something to path around.
+    private const float RaidwideRadius = 25f;
+
     private readonly CrucibleEncounterDatabase database;
 
     public CrucibleDodgeSolver(CrucibleEncounterDatabase database)
@@ -53,9 +57,18 @@ public sealed class CrucibleDodgeSolver
             return DodgePlan.Clear;
         }
 
+        // Raidwide-sized circles are drawn but excluded from the escape search.
+        var avoidable = shapes
+            .Where(s => s.Kind != DangerKind.Circle || s.Radius < RaidwideRadius)
+            .ToList();
+        if (avoidable.Count == 0)
+        {
+            return new DodgePlan { ThreatCount = shapes.Count, SecondsLeft = shapes.Min(s => s.SecondsLeft) };
+        }
+
         var player = Flat(state.PlayerPosition);
-        var inDanger = shapes.Where(s => s.Contains(player)).ToList();
-        var soonest = shapes.Min(s => s.SecondsLeft);
+        var inDanger = avoidable.Where(s => s.Contains(player)).ToList();
+        var soonest = avoidable.Min(s => s.SecondsLeft);
 
         if (inDanger.Count == 0)
         {
@@ -73,7 +86,7 @@ public sealed class CrucibleDodgeSolver
             {
                 var a = MathF.Tau * i / Spokes;
                 var candidate = player + new Vector2(MathF.Sin(a), MathF.Cos(a)) * r;
-                if (shapes.Any(s => s.Contains(candidate)))
+                if (avoidable.Any(s => s.Contains(candidate)))
                 {
                     continue;
                 }
