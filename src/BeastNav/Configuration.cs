@@ -19,6 +19,10 @@ public sealed class Configuration : IPluginConfiguration
     // Keep the overlay on screen even outside the Crucible, for tuning.
     public bool CrucibleOverlayAlwaysShow { get; set; }
 
+    // Paint danger shapes and the computed dodge direction on the game screen.
+    // Dry-run only — it never moves the character.
+    public bool CrucibleZonePaint { get; set; } = true;
+
     // --- Manual "I don't need this pet" list (user controlled) ---------------
     // Toggled from the pet list. Never written by the bestiary sync.
     public List<uint> MarkedPetRowIds { get; set; } = [];

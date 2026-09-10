@@ -90,6 +90,39 @@ public sealed class CrucibleEncounterDatabase
         }
     }
 
+    /// <summary>
+    /// Raw shape numbers from the <c>Action</c> sheet: cast type, the primary
+    /// size (radius for a circle/cone, length for a line, all in yalms), the
+    /// line half-width, and the omen row id.
+    /// </summary>
+    public CastGeometry ReadGeometry(uint castActionId)
+    {
+        if (castActionId == 0)
+        {
+            return default;
+        }
+
+        try
+        {
+            var row = this.dataManager.GetExcelSheet<LuminaAction>()?.GetRowOrDefault(castActionId);
+            if (row is null)
+            {
+                return default;
+            }
+
+            return new CastGeometry(
+                row.Value.CastType,
+                row.Value.EffectRange,
+                row.Value.XAxisModifier,
+                row.Value.Omen.RowId);
+        }
+        catch (Exception ex)
+        {
+            this.log.Debug(ex, "[BeastHelper] Crucible: failed to read Action geometry {Id}.", castActionId);
+            return default;
+        }
+    }
+
     public string ResolveActionName(uint castActionId)
     {
         try
@@ -120,6 +153,9 @@ public sealed class CrucibleEncounterDatabase
 
     public readonly record struct KnownMechanic(MechanicKind Kind, string DisplayName, RecommendationPriority Severity, PositionHint Hint);
 }
+
+/// <summary>Shape numbers straight from the <c>Action</c> sheet (yalms).</summary>
+public readonly record struct CastGeometry(byte CastType, float Size, float HalfWidth, uint OmenId);
 
 public enum ActionShape
 {

@@ -100,7 +100,7 @@ public sealed class CrucibleCastLog
     private void Record(uint territoryId, CrucibleEnemy enemy)
     {
         var key = (enemy.NameId, enemy.CastActionId);
-        var (castType, effectRange, omenId) = this.DescribeAction(enemy.CastActionId);
+        var (castType, effectRange, _, omenId) = this.DescribeAction(enemy.CastActionId);
         var actionName = this.ResolveActionName(enemy.CastActionId);
 
         if (this.records.TryGetValue(key, out var existing))
@@ -197,18 +197,18 @@ public sealed class CrucibleCastLog
         }
     }
 
-    private (byte CastType, byte EffectRange, uint OmenId) DescribeAction(uint actionId)
+    private (byte CastType, byte EffectRange, byte HalfWidth, uint OmenId) DescribeAction(uint actionId)
     {
         try
         {
             var row = this.dataManager.GetExcelSheet<LuminaAction>()?.GetRowOrDefault(actionId);
             return row is null
-                ? ((byte)0, (byte)0, 0u)
-                : (row.Value.CastType, row.Value.EffectRange, row.Value.Omen.RowId);
+                ? ((byte)0, (byte)0, (byte)0, 0u)
+                : (row.Value.CastType, row.Value.EffectRange, row.Value.XAxisModifier, row.Value.Omen.RowId);
         }
         catch
         {
-            return (0, 0, 0);
+            return (0, 0, 0, 0);
         }
     }
 
@@ -229,7 +229,7 @@ public sealed class CrucibleCastLog
     {
         try
         {
-            var (castType, effectRange, omenId) = this.DescribeAction(enemy.CastActionId);
+            var (castType, effectRange, halfWidth, omenId) = this.DescribeAction(enemy.CastActionId);
             var obs = new ObservationRecord
             {
                 T = DateTime.UtcNow.ToString("o"),
@@ -240,6 +240,7 @@ public sealed class CrucibleCastLog
                 ActionName = this.ResolveActionName(enemy.CastActionId),
                 CastType = castType,
                 EffectRange = effectRange,
+                HalfWidth = halfWidth,
                 OmenId = omenId,
                 CastTotal = enemy.CastTotal,
                 TargetsPlayer = enemy.CastTargetsPlayer,
@@ -277,6 +278,8 @@ public sealed class CrucibleCastLog
         public byte CastType { get; init; }
 
         public byte EffectRange { get; init; }
+
+        public byte HalfWidth { get; init; }
 
         public uint OmenId { get; init; }
 

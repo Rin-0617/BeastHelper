@@ -179,6 +179,19 @@ public sealed class MainWindow : Window
         }
 
         ImGui.SameLine();
+        var paint = this.configuration.CrucibleZonePaint;
+        if (ImGui.Checkbox("危険範囲を画面に描画", ref paint))
+        {
+            this.configuration.CrucibleZonePaint = paint;
+            this.saveConfiguration();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("危険範囲と、ソルバが計算した退避方向の矢印を画面上に描きます（ドライラン：動きません）。");
+        }
+
+        ImGui.SameLine();
         var state = this.crucible.Current;
         var status = state.InCrucible
             ? $"闘獣練: 検出 ({state.DetectionSource}) · 敵 {state.Enemies.Count}"

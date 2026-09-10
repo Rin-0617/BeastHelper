@@ -34,8 +34,10 @@ public sealed class Plugin : IDalamudPlugin
     private readonly BeastTamingStateService tamingState;
     private readonly CrucibleStateReader crucibleReader;
     private readonly CrucibleDecisionEngine crucibleEngine;
+    private readonly CrucibleDodgeSolver crucibleDodgeSolver;
     private readonly CrucibleCastLog crucibleCastLog;
     private readonly CrucibleOverlay crucibleOverlay;
+    private readonly CrucibleZoneOverlay crucibleZoneOverlay;
     private readonly MainWindow mainWindow;
     private readonly DebugWindow debugWindow;
     private BeastDestination? pendingDestination;
@@ -89,8 +91,10 @@ public sealed class Plugin : IDalamudPlugin
         this.crucibleEngine = new CrucibleDecisionEngine(
             new CrucibleMechanicDetector(crucibleEncounters),
             new CrucibleBeastSelector(this.beastData, crucibleEncounters));
+        this.crucibleDodgeSolver = new CrucibleDodgeSolver(crucibleEncounters);
         this.crucibleCastLog = new CrucibleCastLog(pluginInterface, dataManager, log);
         this.crucibleOverlay = new CrucibleOverlay(this.configuration, this.crucibleReader, this.crucibleEngine);
+        this.crucibleZoneOverlay = new CrucibleZoneOverlay(this.configuration, this.crucibleReader, this.crucibleDodgeSolver, this.gameGui);
 
         this.clientState.TerritoryChanged += this.OnTerritoryChanged;
         framework.Update += this.OnFrameworkUpdate;
@@ -116,6 +120,7 @@ public sealed class Plugin : IDalamudPlugin
         this.windowSystem.AddWindow(this.debugWindow);
         this.windowSystem.AddWindow(this.crucibleOverlay);
         this.pluginInterface.UiBuilder.Draw += this.windowSystem.Draw;
+        this.pluginInterface.UiBuilder.Draw += this.crucibleZoneOverlay.Draw;
         this.pluginInterface.UiBuilder.OpenConfigUi += this.ToggleMainWindow;
         this.pluginInterface.UiBuilder.OpenMainUi += this.ToggleMainWindow;
 
@@ -136,6 +141,7 @@ public sealed class Plugin : IDalamudPlugin
         this.commandManager.RemoveHandler(CommandName);
         this.commandManager.RemoveHandler(LegacyCommandName);
         this.pluginInterface.UiBuilder.Draw -= this.windowSystem.Draw;
+        this.pluginInterface.UiBuilder.Draw -= this.crucibleZoneOverlay.Draw;
         this.pluginInterface.UiBuilder.OpenConfigUi -= this.ToggleMainWindow;
         this.pluginInterface.UiBuilder.OpenMainUi -= this.ToggleMainWindow;
         this.windowSystem.RemoveAllWindows();
