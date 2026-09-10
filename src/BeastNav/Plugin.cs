@@ -34,6 +34,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly BeastTamingStateService tamingState;
     private readonly CrucibleStateReader crucibleReader;
     private readonly CrucibleDecisionEngine crucibleEngine;
+    private readonly CrucibleCastLog crucibleCastLog;
     private readonly CrucibleOverlay crucibleOverlay;
     private readonly MainWindow mainWindow;
     private readonly DebugWindow debugWindow;
@@ -88,6 +89,7 @@ public sealed class Plugin : IDalamudPlugin
         this.crucibleEngine = new CrucibleDecisionEngine(
             new CrucibleMechanicDetector(crucibleEncounters),
             new CrucibleBeastSelector(this.beastData, crucibleEncounters));
+        this.crucibleCastLog = new CrucibleCastLog(pluginInterface, dataManager, log);
         this.crucibleOverlay = new CrucibleOverlay(this.configuration, this.crucibleReader, this.crucibleEngine);
 
         this.clientState.TerritoryChanged += this.OnTerritoryChanged;
@@ -137,6 +139,7 @@ public sealed class Plugin : IDalamudPlugin
         this.pluginInterface.UiBuilder.OpenConfigUi -= this.ToggleMainWindow;
         this.pluginInterface.UiBuilder.OpenMainUi -= this.ToggleMainWindow;
         this.windowSystem.RemoveAllWindows();
+        this.crucibleCastLog.Flush();
         this.SaveConfiguration();
     }
 
@@ -204,6 +207,10 @@ public sealed class Plugin : IDalamudPlugin
                 this.configuration.CrucibleOverlayAlwaysShow = !this.configuration.CrucibleOverlayAlwaysShow;
                 this.SaveConfiguration();
                 this.chat.Print($"[BeastHelper] Crucible overlay always-show: {this.configuration.CrucibleOverlayAlwaysShow}");
+                break;
+            case "casts":
+                this.crucibleCastLog.Flush();
+                this.chat.Print($"[BeastHelper] {this.crucibleCastLog.RecordCount} observed casts → {this.crucibleCastLog.FilePath}");
                 break;
             default:
                 this.configuration.CrucibleOverlayEnabled = !this.configuration.CrucibleOverlayEnabled;
@@ -284,6 +291,7 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         this.crucibleReader.Update();
+        this.crucibleCastLog.Observe(this.crucibleReader.Current);
         this.crucibleOverlay.IsOpen = this.crucibleOverlay.ShouldBeOpen;
         this.TryAutoSyncBeastNote();
     }
