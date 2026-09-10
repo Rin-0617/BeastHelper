@@ -1,4 +1,5 @@
 using System.Numerics;
+using BeastNav.Services;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects;
 using Dalamud.Plugin.Services;
@@ -29,22 +30,38 @@ public sealed unsafe class CrucibleCombatAssist
     private readonly IObjectTable objectTable;
     private readonly ITargetManager targetManager;
     private readonly ICondition condition;
+    private readonly WrathComboBridge wrath;
     private readonly IPluginLog log;
 
     private DateTime lastAttempt;
+    private bool wrathRotationOn;
 
     public CrucibleCombatAssist(
         Configuration configuration,
         IObjectTable objectTable,
         ITargetManager targetManager,
         ICondition condition,
+        WrathComboBridge wrath,
         IPluginLog log)
     {
         this.configuration = configuration;
         this.objectTable = objectTable;
         this.targetManager = targetManager;
         this.condition = condition;
+        this.wrath = wrath;
         this.log = log;
+    }
+
+    /// <summary>Turn off WrathCombo auto-rotation if we had turned it on.</summary>
+    public void Release()
+    {
+        if (this.wrathRotationOn)
+        {
+            this.wrath.SetAutoRotation(false);
+            this.wrathRotationOn = false;
+        }
+
+        this.wrath.Release();
     }
 
     /// <summary>
@@ -54,16 +71,42 @@ public sealed unsafe class CrucibleCombatAssist
     /// </summary>
     public CombatIntent Tick(CrucibleState state, bool suppressed)
     {
-        if (!this.configuration.CrucibleAutoCombat || suppressed
-            || !state.InCrucible || !state.HasPlayer || !state.InCombat)
+        var enabled = this.configuration.CrucibleAutoCombat && !suppressed && state.InCrucible && state.HasPlayer;
+        var want = enabled && state.InCombat;
+
+        // Delegate the rotation to WrathCombo when it is installed.
+        if (this.configuration.CrucibleAutoCombat && this.wrath.Available)
+        {
+            if (want != this.wrathRotationOn)
+            {
+                this.wrath.SetAutoRotation(want);
+                this.wrathRotationOn = want;
+            }
+
+            var t = NearestLive(state);
+            return t is null
+                ? CombatIntent.None
+                : new CombatIntent
+                {
+                    HasTarget = true,
+                    TargetPosition = t.Position,
+                    TargetDistance = t.Distance,
+                    InActionRange = t.Distance <= 22f,
+                };
+        }
+
+        if (this.wrathRotationOn)
+        {
+            this.wrath.SetAutoRotation(false);
+            this.wrathRotationOn = false;
+        }
+
+        if (!want)
         {
             return CombatIntent.None;
         }
 
-        var target = state.Enemies
-            .Where(static enemy => enemy.CurrentHp > 0)
-            .OrderBy(static enemy => enemy.Distance)
-            .FirstOrDefault();
+        var target = NearestLive(state);
         if (target is null)
         {
             return CombatIntent.None;
@@ -134,6 +177,12 @@ public sealed unsafe class CrucibleCombatAssist
         intent = intent with { InActionRange = anyUsable };
         return intent;
     }
+
+    private static CrucibleEnemy? NearestLive(CrucibleState state)
+        => state.Enemies
+            .Where(static enemy => enemy.CurrentHp > 0)
+            .OrderBy(static enemy => enemy.Distance)
+            .FirstOrDefault();
 }
 
 public readonly record struct CombatIntent

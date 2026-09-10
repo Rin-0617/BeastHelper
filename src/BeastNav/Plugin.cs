@@ -97,7 +97,8 @@ public sealed class Plugin : IDalamudPlugin
         this.crucibleDodgeSolver = new CrucibleDodgeSolver(crucibleEncounters);
         this.crucibleRoute = new CrucibleRoute(pluginInterface, log);
         this.crucibleActuator = new CrucibleActuator(this.configuration, this.navmesh, this.crucibleRoute, this.condition, log);
-        this.crucibleCombat = new CrucibleCombatAssist(this.configuration, this.objectTable, targetManager, this.condition, log);
+        this.crucibleCombat = new CrucibleCombatAssist(
+            this.configuration, this.objectTable, targetManager, this.condition, new WrathComboBridge(pluginInterface, log), log);
         this.crucibleCastLog = new CrucibleCastLog(pluginInterface, dataManager, log);
         this.crucibleOverlay = new CrucibleOverlay(this.configuration, this.crucibleReader, this.crucibleEngine);
         this.crucibleZoneOverlay = new CrucibleZoneOverlay(this.configuration, this.crucibleReader, this.crucibleDodgeSolver, this.gameGui);
@@ -151,6 +152,7 @@ public sealed class Plugin : IDalamudPlugin
         this.pluginInterface.UiBuilder.OpenConfigUi -= this.ToggleMainWindow;
         this.pluginInterface.UiBuilder.OpenMainUi -= this.ToggleMainWindow;
         this.windowSystem.RemoveAllWindows();
+        this.crucibleCombat.Release();
         this.crucibleCastLog.Flush();
         this.SaveConfiguration();
     }
