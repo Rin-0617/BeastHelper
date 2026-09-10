@@ -38,6 +38,7 @@ public sealed class CrucibleCastLog
 
     private readonly Dictionary<(uint Enemy, uint Action), CastRecord> records = [];
     private readonly HashSet<(ulong GameObjectId, uint Action)> castsInProgress = [];
+    private readonly Dictionary<(ulong GameObjectId, uint Action), PendingCast> pending = [];
 
     private bool dirty;
     private DateTime lastFlush = DateTime.MinValue;
@@ -63,6 +64,7 @@ public sealed class CrucibleCastLog
         if (!state.InCrucible)
         {
             this.castsInProgress.Clear();
+            this.pending.Clear();
             return;
         }
 
@@ -86,6 +88,18 @@ public sealed class CrucibleCastLog
 
             this.Record(state.TerritoryId, enemy);
             this.AppendObservation(state, enemy);
+            this.pending[live] = new PendingCast(
+                enemy.CastActionId,
+                enemy.Name,
+                state.PlayerCurrentHp,
+                state.PlayerMaxHp,
+                DateTime.UtcNow);
+        }
+
+        // Casts that finished this tick: did the player lose HP over the cast?
+        foreach (var key in this.castsInProgress.Where(k => !stillCasting.Contains(k)).ToList())
+        {
+            this.ResolvePending(key, state.PlayerCurrentHp);
         }
 
         this.castsInProgress.IntersectWith(stillCasting);
@@ -259,7 +273,57 @@ public sealed class CrucibleCastLog
         }
     }
 
+    private void ResolvePending(
+        (ulong GameObjectId, uint Action) key,
+        uint playerHpNow)
+    {
+        if (!this.pending.Remove(key, out var p))
+        {
+            return;
+        }
+
+        try
+        {
+            var lost = p.StartHp > playerHpNow ? p.StartHp - playerHpNow : 0u;
+            var lostPct = p.MaxHp == 0 ? 0f : (float)lost / p.MaxHp;
+            var hit = lostPct >= 0.02f;
+
+            var res = new ResolutionRecord
+            {
+                T = DateTime.UtcNow.ToString("o"),
+                Resolved = p.ActionId,
+                EnemyName = p.EnemyName,
+                HpLossPct = MathF.Round(lostPct, 3),
+                Hit = hit,
+                CastMs = (int)(DateTime.UtcNow - p.StartedAt).TotalMilliseconds,
+            };
+
+            File.AppendAllText(this.ObservationsPath, JsonSerializer.Serialize(res, this.compactJson) + "\n");
+        }
+        catch (Exception ex)
+        {
+            this.log.Debug(ex, "[BeastHelper] Failed to append a Crucible resolution.");
+        }
+    }
+
     private sealed record CastFile(string Comment, List<CastRecord> Casts);
+
+    private readonly record struct PendingCast(uint ActionId, string EnemyName, uint StartHp, uint MaxHp, DateTime StartedAt);
+
+    private sealed record ResolutionRecord
+    {
+        public string T { get; init; } = string.Empty;
+
+        public uint Resolved { get; init; }
+
+        public string EnemyName { get; init; } = string.Empty;
+
+        public float HpLossPct { get; init; }
+
+        public bool Hit { get; init; }
+
+        public int CastMs { get; init; }
+    }
 
     private sealed record ObservationRecord
     {

@@ -34,7 +34,15 @@ public sealed class CrucibleDodgeSolver
 
     public IReadOnlyList<DangerShape> LastShapes { get; private set; } = [];
 
+    public DodgePlan LastPlan { get; private set; } = DodgePlan.Clear;
+
     public DodgePlan Solve(CrucibleState state)
+    {
+        this.LastPlan = this.SolveCore(state);
+        return this.LastPlan;
+    }
+
+    private DodgePlan SolveCore(CrucibleState state)
     {
         if (!state.InCrucible || !state.HasPlayer)
         {

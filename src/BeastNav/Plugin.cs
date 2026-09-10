@@ -35,6 +35,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly CrucibleStateReader crucibleReader;
     private readonly CrucibleDecisionEngine crucibleEngine;
     private readonly CrucibleDodgeSolver crucibleDodgeSolver;
+    private readonly CrucibleActuator crucibleActuator;
     private readonly CrucibleCastLog crucibleCastLog;
     private readonly CrucibleOverlay crucibleOverlay;
     private readonly CrucibleZoneOverlay crucibleZoneOverlay;
@@ -92,6 +93,7 @@ public sealed class Plugin : IDalamudPlugin
             new CrucibleMechanicDetector(crucibleEncounters),
             new CrucibleBeastSelector(this.beastData, crucibleEncounters));
         this.crucibleDodgeSolver = new CrucibleDodgeSolver(crucibleEncounters);
+        this.crucibleActuator = new CrucibleActuator(this.configuration, this.navmesh, this.condition, log);
         this.crucibleCastLog = new CrucibleCastLog(pluginInterface, dataManager, log);
         this.crucibleOverlay = new CrucibleOverlay(this.configuration, this.crucibleReader, this.crucibleEngine);
         this.crucibleZoneOverlay = new CrucibleZoneOverlay(this.configuration, this.crucibleReader, this.crucibleDodgeSolver, this.gameGui);
@@ -302,7 +304,10 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         this.crucibleReader.Update();
-        this.crucibleCastLog.Observe(this.crucibleReader.Current);
+        var crucibleState = this.crucibleReader.Current;
+        this.crucibleCastLog.Observe(crucibleState);
+        var dodgePlan = this.crucibleDodgeSolver.Solve(crucibleState);
+        this.crucibleActuator.Tick(crucibleState, dodgePlan);
         this.crucibleOverlay.IsOpen = this.crucibleOverlay.ShouldBeOpen;
         this.TryAutoSyncBeastNote();
     }

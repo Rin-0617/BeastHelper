@@ -23,6 +23,10 @@ public sealed class Configuration : IPluginConfiguration
     // Dry-run only — it never moves the character.
     public bool CrucibleZonePaint { get; set; } = true;
 
+    // EXPERIMENTAL. Automatically walk out of danger during casts. This is
+    // in-combat movement automation (against the FFXIV ToS); off by default.
+    public bool CrucibleAutoDodge { get; set; }
+
     // --- Manual "I don't need this pet" list (user controlled) ---------------
     // Toggled from the pet list. Never written by the bestiary sync.
     public List<uint> MarkedPetRowIds { get; set; } = [];

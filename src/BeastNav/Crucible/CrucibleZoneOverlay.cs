@@ -50,7 +50,8 @@ public sealed unsafe class CrucibleZoneOverlay
             return;
         }
 
-        var plan = this.solver.Solve(state);
+        // Plugin runs the solver once per framework tick; just read its result.
+        var plan = this.solver.LastPlan;
         var shapes = this.solver.LastShapes;
         if (shapes.Count == 0)
         {

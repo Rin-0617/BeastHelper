@@ -192,6 +192,22 @@ public sealed class MainWindow : Window
         }
 
         ImGui.SameLine();
+        var dodge = this.configuration.CrucibleAutoDodge;
+        if (ImGui.Checkbox("自動回避 (実験的)", ref dodge))
+        {
+            this.configuration.CrucibleAutoDodge = dodge;
+            this.saveConfiguration();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "詠唱中、計算した安全地点へ自動でキャラを移動させます。\n"
+                + "戦闘中の自動移動は FFXIV 規約違反です。自己責任で。\n"
+                + "BeastHelper の目的地移動中は作動しません。");
+        }
+
+        ImGui.SameLine();
         var state = this.crucible.Current;
         var status = state.InCrucible
             ? $"闘獣練: 検出 ({state.DetectionSource}) · 敵 {state.Enemies.Count}"
