@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using BeastNav.Models;
 using Dalamud.Memory;
 using Dalamud.Plugin.Services;
+using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 using FFXIVClientStructs.FFXIV.Component.GUI;
@@ -15,8 +16,14 @@ namespace BeastNav.Services;
 /// <see cref="Configuration.TamedPetRowIds"/>.
 /// </summary>
 /// <remarks>
-/// Two strategies are attempted, most reliable first:
+/// Strategies are attempted most reliable first:
 /// <list type="number">
+///   <item>
+///     <b>xbmmanager</b> – read <c>XBMManager.IsPetUnlocked</c> for every
+///     <c>XBMPet</c> row. Available any time the pet-list packet has arrived
+///     (<c>State == Received</c>), so the 魔物図鑑 does not need to be open.
+///     This is the normal path; the two below are fallbacks.
+///   </item>
 ///   <item>
 ///     <b>addon</b> – while <c>XBMMonsterNotebook</c> is open, read its grid from
 ///     the AtkValues. Each cell's portrait icon id tells captured (unique art)
@@ -64,9 +71,20 @@ public unsafe sealed class BeastTamingStateService
     /// </param>
     public BeastTamingSyncResult TrySync(bool allowUnverifiedMerge = true)
     {
+        var direct = this.TryReadFromXBMManager();
+        if (direct.Success)
+        {
+            return this.Apply(direct);
+        }
+
         var addon = this.TryReadFromAddon(allowUnverifiedMerge);
         var result = addon.Success ? addon : this.MergeWithModule(addon);
+        return this.Apply(result);
+    }
 
+    /// <summary>Folds a successful read into the configuration; passes failures straight through.</summary>
+    private BeastTamingSyncResult Apply(BeastTamingSyncResult result)
+    {
         if (!result.Success)
         {
             this.LastResult = result;
@@ -93,6 +111,79 @@ public unsafe sealed class BeastTamingStateService
         };
         this.LastResult = result;
         return result;
+    }
+
+    // -------------------------------------------------------------- xbmmanager --
+
+    /// <summary>
+    /// Reads capture state straight from <c>XBMManager</c>. Works whenever the
+    /// pet-list packet has been received, so the 魔物図鑑 does not need to be open.
+    /// </summary>
+    private BeastTamingSyncResult TryReadFromXBMManager()
+    {
+        try
+        {
+            var manager = XBMManager.Instance();
+            if (manager is null)
+            {
+                return new BeastTamingSyncResult { Strategy = "xbmmanager", Message = "XBMManager is unavailable." };
+            }
+
+            if (manager->State != XBMManager.DataState.Received)
+            {
+                return new BeastTamingSyncResult
+                {
+                    Strategy = "xbmmanager",
+                    Message = $"XBMManager pet list not received yet (State={manager->State}).",
+                };
+            }
+
+            var pets = this.OrderedPets();
+            if (pets.Length == 0)
+            {
+                return new BeastTamingSyncResult { Strategy = "xbmmanager", Message = "No XBMPet rows loaded." };
+            }
+
+            var tamed = new List<uint>();
+            foreach (var pet in pets)
+            {
+                bool unlocked;
+                try
+                {
+                    // Keyed on the XBMPet row id (図鑑 "No."), not the Pet row id.
+                    unlocked = manager->IsPetUnlocked(pet.No);
+                }
+                catch
+                {
+                    unlocked = false;
+                }
+
+                if (unlocked)
+                {
+                    tamed.Add(pet.PetRowId);
+                }
+            }
+
+            var ordered = this.OrderByNo(tamed);
+            return new BeastTamingSyncResult
+            {
+                Success = true,
+                Strategy = "xbmmanager",
+                Source = "XBMManager",
+                Method = "IsPetUnlocked(XBMPet row id)",
+                TamedPetRowIds = ordered,
+                Message = $"図鑑 synced from XBMManager: {ordered.Count} captured (NumUnlockedPets={manager->NumUnlockedPets}).",
+            };
+        }
+        catch (Exception ex)
+        {
+            this.log.Error(ex, "Failed to read XBMManager pet-unlock state.");
+            return new BeastTamingSyncResult
+            {
+                Strategy = "xbmmanager",
+                Message = $"XBMManager read failed: {ex.GetType().Name}.",
+            };
+        }
     }
 
     private BeastTamingSyncResult MergeWithModule(BeastTamingSyncResult addonAttempt)

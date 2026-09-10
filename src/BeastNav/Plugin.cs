@@ -1,3 +1,4 @@
+using BeastNav.Crucible;
 using BeastNav.Services;
 using BeastNav.Windows;
 using BeastNav.Models;
@@ -31,6 +32,9 @@ public sealed class Plugin : IDalamudPlugin
     private readonly TeleportService teleport;
     private readonly MountService mount;
     private readonly BeastTamingStateService tamingState;
+    private readonly CrucibleStateReader crucibleReader;
+    private readonly CrucibleDecisionEngine crucibleEngine;
+    private readonly CrucibleOverlay crucibleOverlay;
     private readonly MainWindow mainWindow;
     private readonly DebugWindow debugWindow;
     private BeastDestination? pendingDestination;
@@ -47,6 +51,7 @@ public sealed class Plugin : IDalamudPlugin
         IClientState clientState,
         ICondition condition,
         IObjectTable objectTable,
+        ITargetManager targetManager,
         IGameGui gameGui,
         IDataManager dataManager,
         IAetheryteList aetherytes,
@@ -63,12 +68,28 @@ public sealed class Plugin : IDalamudPlugin
         this.framework = framework;
         this.log = log;
         this.configuration = this.pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+
+        // Historical bug: the config's default addon-name list was appended to
+        // (not replaced) on every load, so it grew by five entries per session.
+        this.configuration.BeastNoteAddonCandidates =
+            this.configuration.BeastNoteAddonCandidates.Distinct().ToList();
         this.beastData = new BeastDataService(dataManager, log);
         this.destinations = new BeastDestinationService(pluginInterface, dataManager, this.beastData, log);
         this.navmesh = new NavmeshService(pluginInterface, condition, log);
         this.teleport = new TeleportService(aetherytes, log);
         this.mount = new MountService(log);
         this.tamingState = new BeastTamingStateService(this.gameGui, this.beastData, this.configuration, log);
+
+        // Crucible (闘獣練) assist: read-only state → rule-based advice → overlay.
+        // Nothing in this chain acts on the game or drives movement.
+        var crucibleEncounters = new CrucibleEncounterDatabase(this.beastData, dataManager, log);
+        this.crucibleReader = new CrucibleStateReader(
+            this.clientState, this.condition, this.objectTable, targetManager, dataManager, this.beastData, log);
+        this.crucibleEngine = new CrucibleDecisionEngine(
+            new CrucibleMechanicDetector(crucibleEncounters),
+            new CrucibleBeastSelector(this.beastData, crucibleEncounters));
+        this.crucibleOverlay = new CrucibleOverlay(this.configuration, this.crucibleReader, this.crucibleEngine);
+
         this.clientState.TerritoryChanged += this.OnTerritoryChanged;
         framework.Update += this.OnFrameworkUpdate;
 
@@ -78,6 +99,7 @@ public sealed class Plugin : IDalamudPlugin
             this.destinations,
             this.navmesh,
             this.tamingState,
+            this.crucibleReader,
             this.clientState,
             this.gameGui,
             this.TeleportToDestination,
@@ -90,13 +112,14 @@ public sealed class Plugin : IDalamudPlugin
 
         this.windowSystem.AddWindow(this.mainWindow);
         this.windowSystem.AddWindow(this.debugWindow);
+        this.windowSystem.AddWindow(this.crucibleOverlay);
         this.pluginInterface.UiBuilder.Draw += this.windowSystem.Draw;
         this.pluginInterface.UiBuilder.OpenConfigUi += this.ToggleMainWindow;
         this.pluginInterface.UiBuilder.OpenMainUi += this.ToggleMainWindow;
 
         this.commandManager.AddHandler(CommandName, new CommandInfo(this.OnCommand)
         {
-            HelpMessage = "Open BeastHelper. Subcommands: sync, autosync, dumpnote, debug, reload, stop.",
+            HelpMessage = "Open BeastHelper. Subcommands: sync, autosync, dumpnote, debug, reload, stop, crucible.",
         });
         this.commandManager.AddHandler(LegacyCommandName, new CommandInfo(this.OnCommand)
         {
@@ -154,8 +177,38 @@ public sealed class Plugin : IDalamudPlugin
                 this.pendingDestination = null;
                 this.navmesh.Stop();
                 break;
+            case "crucible":
+                this.HandleCrucibleCommand(parts.Length > 1 ? parts[1].ToLowerInvariant() : string.Empty);
+                break;
+            case "resetnote":
+                this.configuration.TamedPetRowIds = [];
+                this.nextAutoNoteSync = DateTime.MinValue;
+                this.SaveConfiguration();
+                this.chat.Print("[BeastHelper] Cleared the captured-monster list. Auto-sync will refill it from XBMManager.");
+                break;
             default:
-                this.chat.Print("[BeastHelper] Usage: /beasthelper [sync|autosync|dumpnote|debug|reload|stop]");
+                this.chat.Print("[BeastHelper] Usage: /beasthelper [sync|autosync|dumpnote|debug|reload|stop|crucible|resetnote]");
+                break;
+        }
+    }
+
+    private void HandleCrucibleCommand(string sub)
+    {
+        switch (sub)
+        {
+            case "probe":
+                this.crucibleReader.LogUnlockProbe(this.configuration.TamedPetRowIds);
+                this.chat.Print("[BeastHelper] Crucible unlock probe written to the plugin log (/xllog).");
+                break;
+            case "pin":
+                this.configuration.CrucibleOverlayAlwaysShow = !this.configuration.CrucibleOverlayAlwaysShow;
+                this.SaveConfiguration();
+                this.chat.Print($"[BeastHelper] Crucible overlay always-show: {this.configuration.CrucibleOverlayAlwaysShow}");
+                break;
+            default:
+                this.configuration.CrucibleOverlayEnabled = !this.configuration.CrucibleOverlayEnabled;
+                this.SaveConfiguration();
+                this.chat.Print($"[BeastHelper] Crucible assist overlay: {this.configuration.CrucibleOverlayEnabled}");
                 break;
         }
     }
@@ -230,6 +283,7 @@ public sealed class Plugin : IDalamudPlugin
             this.navmesh.Update(player.Position);
         }
 
+        this.crucibleReader.Update();
         this.TryAutoSyncBeastNote();
     }
 

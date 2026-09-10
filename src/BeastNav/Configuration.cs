@@ -11,6 +11,14 @@ public sealed class Configuration : IPluginConfiguration
 
     public float StopDistance { get; set; } = 7.5f;
 
+    // --- Crucible (闘獣練) assist overlay -----------------------------------
+    // Read-only advisory overlay; never drives the character. Toggled with
+    // /beasthelper crucible.
+    public bool CrucibleOverlayEnabled { get; set; }
+
+    // Keep the overlay on screen even outside the Crucible, for tuning.
+    public bool CrucibleOverlayAlwaysShow { get; set; }
+
     // --- Manual "I don't need this pet" list (user controlled) ---------------
     // Toggled from the pet list. Never written by the bestiary sync.
     public List<uint> MarkedPetRowIds { get; set; } = [];
@@ -22,7 +30,9 @@ public sealed class Configuration : IPluginConfiguration
     // --- Bestiary ("図鑑") capture state, synced from the game ---------------
     // Populated by BeastTamingStateService. Treat as read-only mirror of the
     // in-game monster note; editing by hand will be overwritten on the next sync.
-    public bool AutoSyncBeastNote { get; set; }
+    // On by default: the XBMManager source makes this cheap and it needs no
+    // open 魔物図鑑.
+    public bool AutoSyncBeastNote { get; set; } = true;
 
     public List<uint> TamedPetRowIds { get; set; } = [];
 

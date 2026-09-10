@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Reflection;
+using BeastNav.Crucible;
 using BeastNav.Models;
 using BeastNav.Services;
 using Dalamud.Bindings.ImGui;
@@ -24,6 +25,7 @@ public sealed class MainWindow : Window
     private readonly BeastDestinationService destinations;
     private readonly NavmeshService navmesh;
     private readonly BeastTamingStateService tamingState;
+    private readonly CrucibleStateReader crucible;
     private readonly IClientState clientState;
     private readonly IGameGui gameGui;
     private readonly Action<BeastDestination> teleport;
@@ -38,6 +40,7 @@ public sealed class MainWindow : Window
         BeastDestinationService destinations,
         NavmeshService navmesh,
         BeastTamingStateService tamingState,
+        CrucibleStateReader crucible,
         IClientState clientState,
         IGameGui gameGui,
         Action<BeastDestination> teleport,
@@ -50,6 +53,7 @@ public sealed class MainWindow : Window
         this.destinations = destinations;
         this.navmesh = navmesh;
         this.tamingState = tamingState;
+        this.crucible = crucible;
         this.clientState = clientState;
         this.gameGui = gameGui;
         this.teleport = teleport;
@@ -144,8 +148,42 @@ public sealed class MainWindow : Window
         ImGui.SameLine();
         ImGui.TextUnformatted(this.navmesh.IsReady() ? "vnavmesh: ready" : "vnavmesh: unavailable");
 
+        this.DrawCrucibleControls();
+
         ImGui.SetNextItemWidth(-1);
         ImGui.InputTextWithHint("##filter", "Filter by name, No, or description", ref this.filter, 256);
+    }
+
+    private void DrawCrucibleControls()
+    {
+        var enabled = this.configuration.CrucibleOverlayEnabled;
+        if (ImGui.Checkbox("闘獣練アシスト (Crucible assist)", ref enabled))
+        {
+            this.configuration.CrucibleOverlayEnabled = enabled;
+            this.saveConfiguration();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "闘獣練の状態を読み取り、推奨行動をオーバーレイ表示します（自動操作はしません）。\n"
+                + "オーバーレイは闘獣練の中でのみ表示されます。");
+        }
+
+        ImGui.SameLine();
+        var pin = this.configuration.CrucibleOverlayAlwaysShow;
+        if (ImGui.Checkbox("常に表示", ref pin))
+        {
+            this.configuration.CrucibleOverlayAlwaysShow = pin;
+            this.saveConfiguration();
+        }
+
+        ImGui.SameLine();
+        var state = this.crucible.Current;
+        var status = state.InCrucible
+            ? $"闘獣練: 検出 ({state.DetectionSource}) · 敵 {state.Enemies.Count}"
+            : "闘獣練: 未検出";
+        ImGui.TextDisabled(status);
     }
 
     private void DrawPetList()
