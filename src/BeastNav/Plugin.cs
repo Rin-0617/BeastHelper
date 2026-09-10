@@ -284,6 +284,7 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         this.crucibleReader.Update();
+        this.crucibleOverlay.IsOpen = this.crucibleOverlay.ShouldBeOpen;
         this.TryAutoSyncBeastNote();
     }
 

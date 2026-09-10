@@ -30,17 +30,17 @@ public sealed class CrucibleOverlay : Window
         this.RespectCloseHotkey = true;
     }
 
-    public override bool DrawConditions()
-    {
-        // Show while enabled, but only when actually in the Crucible unless the
-        // user has pinned it open for debugging.
-        if (!this.configuration.CrucibleOverlayEnabled)
-        {
-            return false;
-        }
+    /// <summary>
+    /// Whether the window should currently be visible. <see cref="Plugin"/> pushes
+    /// this into <see cref="Window.IsOpen"/> every tick — the WindowSystem skips
+    /// windows whose <c>IsOpen</c> is false before it ever consults
+    /// <see cref="DrawConditions"/>.
+    /// </summary>
+    public bool ShouldBeOpen
+        => this.configuration.CrucibleOverlayEnabled
+           && (this.configuration.CrucibleOverlayAlwaysShow || this.reader.Current.InCrucible);
 
-        return this.configuration.CrucibleOverlayAlwaysShow || this.reader.Current.InCrucible;
-    }
+    public override bool DrawConditions() => this.configuration.CrucibleOverlayEnabled;
 
     public override void Draw()
     {
