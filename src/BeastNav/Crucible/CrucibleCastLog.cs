@@ -16,6 +16,7 @@ namespace BeastNav.Crucible;
 public sealed class CrucibleCastLog
 {
     private const string FileName = "crucible-casts.json";
+    private const string ObservationsFileName = "crucible-observations.jsonl";
 
     private static readonly TimeSpan FlushInterval = TimeSpan.FromSeconds(10);
 
@@ -28,6 +29,11 @@ public sealed class CrucibleCastLog
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    private readonly JsonSerializerOptions compactJson = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
 
     private readonly Dictionary<(uint Enemy, uint Action), CastRecord> records = [];
@@ -45,6 +51,9 @@ public sealed class CrucibleCastLog
     }
 
     public string FilePath => Path.Combine(this.pluginInterface.ConfigDirectory.FullName, FileName);
+
+    /// <summary>Append-only geometry log, one JSON object per cast instance — the raw material for the dodge solver, ideal to fill from replays.</summary>
+    public string ObservationsPath => Path.Combine(this.pluginInterface.ConfigDirectory.FullName, ObservationsFileName);
 
     public int RecordCount => this.records.Count;
 
@@ -76,6 +85,7 @@ public sealed class CrucibleCastLog
             }
 
             this.Record(state.TerritoryId, enemy);
+            this.AppendObservation(state, enemy);
         }
 
         this.castsInProgress.IntersectWith(stillCasting);
@@ -215,7 +225,73 @@ public sealed class CrucibleCastLog
         }
     }
 
+    private void AppendObservation(CrucibleState state, CrucibleEnemy enemy)
+    {
+        try
+        {
+            var (castType, effectRange, omenId) = this.DescribeAction(enemy.CastActionId);
+            var obs = new ObservationRecord
+            {
+                T = DateTime.UtcNow.ToString("o"),
+                TerritoryId = state.TerritoryId,
+                EnemyNameId = enemy.NameId,
+                EnemyName = enemy.Name,
+                ActionId = enemy.CastActionId,
+                ActionName = this.ResolveActionName(enemy.CastActionId),
+                CastType = castType,
+                EffectRange = effectRange,
+                OmenId = omenId,
+                CastTotal = enemy.CastTotal,
+                TargetsPlayer = enemy.CastTargetsPlayer,
+                EnemyPos = [enemy.Position.X, enemy.Position.Y, enemy.Position.Z],
+                EnemyRot = enemy.Rotation,
+                PlayerPos = [state.PlayerPosition.X, state.PlayerPosition.Y, state.PlayerPosition.Z],
+                PlayerRot = state.PlayerRotation,
+            };
+
+            Directory.CreateDirectory(this.pluginInterface.ConfigDirectory.FullName);
+            File.AppendAllText(this.ObservationsPath, JsonSerializer.Serialize(obs, this.compactJson) + "\n");
+        }
+        catch (Exception ex)
+        {
+            this.log.Debug(ex, "[BeastHelper] Failed to append a Crucible observation.");
+        }
+    }
+
     private sealed record CastFile(string Comment, List<CastRecord> Casts);
+
+    private sealed record ObservationRecord
+    {
+        public string T { get; init; } = string.Empty;
+
+        public uint TerritoryId { get; init; }
+
+        public uint EnemyNameId { get; init; }
+
+        public string EnemyName { get; init; } = string.Empty;
+
+        public uint ActionId { get; init; }
+
+        public string ActionName { get; init; } = string.Empty;
+
+        public byte CastType { get; init; }
+
+        public byte EffectRange { get; init; }
+
+        public uint OmenId { get; init; }
+
+        public float CastTotal { get; init; }
+
+        public bool TargetsPlayer { get; init; }
+
+        public float[] EnemyPos { get; init; } = [];
+
+        public float EnemyRot { get; init; }
+
+        public float[] PlayerPos { get; init; } = [];
+
+        public float PlayerRot { get; init; }
+    }
 
     public sealed record CastRecord
     {

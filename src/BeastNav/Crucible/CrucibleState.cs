@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace BeastNav.Crucible;
 
 /// <summary>
@@ -6,9 +8,10 @@ namespace BeastNav.Crucible;
 /// <see cref="CrucibleStateReader"/>.
 /// </summary>
 /// <remarks>
-/// This type is deliberately inert: it holds observed state only. It carries no
-/// world coordinates that could be fed straight into automated movement, and it
-/// exposes no methods that act on the game.
+/// This type holds observed state only and exposes no method that acts on the
+/// game. It does carry world coordinates (enemy and player positions, facings) —
+/// the dodge assist needs the geometry — but movement, if it is ever added, is a
+/// separate opt-in actuator, not something wired into this snapshot.
 /// </remarks>
 public sealed record CrucibleState
 {
@@ -34,6 +37,11 @@ public sealed record CrucibleState
     public uint PlayerMaxHp { get; init; }
 
     public float PlayerHpFraction => this.PlayerMaxHp == 0 ? 1f : (float)this.PlayerCurrentHp / this.PlayerMaxHp;
+
+    public Vector3 PlayerPosition { get; init; }
+
+    /// <summary>Player facing, radians (game convention: 0 = south / +Z).</summary>
+    public float PlayerRotation { get; init; }
 
     // --- beast state ---------------------------------------------------------
     /// <summary><c>true</c> once <c>XBMManager</c> has received its pet-list packet.</summary>
@@ -85,10 +93,11 @@ public sealed record CrucibleEnemy
 
     public bool CastTargetsPlayer { get; init; }
 
-    /// <summary>
-    /// Distance from the player, in yalms. A scalar only — enemy world
-    /// coordinates are deliberately not carried on this type so nothing
-    /// downstream can turn the state into a navigation target.
-    /// </summary>
+    /// <summary>Distance from the player, in yalms.</summary>
     public float Distance { get; init; }
+
+    public Vector3 Position { get; init; }
+
+    /// <summary>Enemy facing, radians (game convention: 0 = south / +Z).</summary>
+    public float Rotation { get; init; }
 }

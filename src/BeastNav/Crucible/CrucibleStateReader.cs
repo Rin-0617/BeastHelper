@@ -91,6 +91,8 @@ public sealed unsafe class CrucibleStateReader
             HasPlayer = player is not null,
             PlayerCurrentHp = player?.CurrentHp ?? 0,
             PlayerMaxHp = player?.MaxHp ?? 0,
+            PlayerPosition = player?.Position ?? default,
+            PlayerRotation = player?.Rotation ?? 0f,
             BeastDataReady = beast.Ready,
             UnlockedBeastCount = beast.Count,
             UnlockedBeastPetRowIds = beast.Unlocked,
@@ -327,6 +329,8 @@ public sealed unsafe class CrucibleStateReader
                 CastTotal = npc.TotalCastTime,
                 CastTargetsPlayer = npc.IsCasting && npc.CastTargetObjectId == player.GameObjectId,
                 Distance = distance,
+                Position = npc.Position,
+                Rotation = npc.Rotation,
             });
         }
 
