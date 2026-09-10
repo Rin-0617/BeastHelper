@@ -211,6 +211,11 @@ public sealed class Plugin : IDalamudPlugin
             case "casts":
                 this.crucibleCastLog.Flush();
                 this.chat.Print($"[BeastHelper] {this.crucibleCastLog.RecordCount} observed casts → {this.crucibleCastLog.FilePath}");
+                this.chat.Print($"[BeastHelper] geometry log → {this.crucibleCastLog.ObservationsPath}");
+                break;
+            case "force":
+                this.crucibleReader.ForceActive = !this.crucibleReader.ForceActive;
+                this.chat.Print($"[BeastHelper] Crucible force-active: {this.crucibleReader.ForceActive} (for replay observation)");
                 break;
             default:
                 this.configuration.CrucibleOverlayEnabled = !this.configuration.CrucibleOverlayEnabled;

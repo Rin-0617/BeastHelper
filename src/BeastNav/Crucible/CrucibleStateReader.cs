@@ -60,6 +60,13 @@ public sealed unsafe class CrucibleStateReader
 
     public CrucibleState Current { get; private set; } = CrucibleState.Empty;
 
+    /// <summary>
+    /// Debug override (<c>/beasthelper crucible force</c>): treat the current
+    /// zone as the Crucible even when auto-detection says otherwise. Useful when
+    /// watching a replay, where the instance director may not spin up.
+    /// </summary>
+    public bool ForceActive { get; set; }
+
     public void Update()
     {
         try
@@ -76,6 +83,11 @@ public sealed unsafe class CrucibleStateReader
     private CrucibleState Capture()
     {
         var (inCrucible, source) = this.DetectCrucible();
+        if (!inCrucible && this.ForceActive)
+        {
+            (inCrucible, source) = (true, "forced");
+        }
+
         var player = this.objectTable.LocalPlayer;
 
         var beast = this.ReadBeastState();
