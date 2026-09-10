@@ -42,11 +42,16 @@ public sealed class CrucibleOverlay : Window
 
     public override bool DrawConditions() => this.configuration.CrucibleOverlayEnabled;
 
+    private static readonly Vector4 Red = new(1f, 0.35f, 0.35f, 1f);
+    private static readonly Vector4 Orange = new(1f, 0.7f, 0.3f, 1f);
+    private static readonly Vector4 Yellow = new(1f, 0.9f, 0.5f, 1f);
+    private static readonly Vector4 Green = new(0.6f, 0.85f, 0.6f, 1f);
+    private static readonly Vector4 Grey = new(0.6f, 0.6f, 0.6f, 1f);
+
     public override void Draw()
     {
         var state = this.reader.Current;
         var recommendation = this.engine.Evaluate(state);
-
         var danger = recommendation.Type == RecommendationType.AvoidDanger;
 
         StatusLine("Combat Assist", state.InCrucible ? (state.InCombat ? "ACTIVE" : "STANDBY") : "IDLE");
@@ -55,33 +60,64 @@ public sealed class CrucibleOverlay : Window
 
         ImGui.Separator();
 
-        ImGui.TextUnformatted("Recommended Action");
-        ImGui.SameLine();
-        var color = recommendation.Priority switch
+        // The one-line call. Always says something.
+        var color = Colour(recommendation.Priority);
+        if (danger || recommendation.Type == RecommendationType.Defensive)
         {
-            RecommendationPriority.Critical => new Vector4(1f, 0.35f, 0.35f, 1f),
-            RecommendationPriority.High => new Vector4(1f, 0.7f, 0.3f, 1f),
-            RecommendationPriority.Medium => new Vector4(1f, 0.9f, 0.5f, 1f),
-            _ => new Vector4(0.7f, 0.85f, 0.7f, 1f),
-        };
-        ImGui.TextColored(color, recommendation.Type.ToString());
-
-        if (recommendation.Position != PositionHint.None)
-        {
-            ImGui.TextColored(color, $"  → {Humanise(recommendation.Position)}");
+            ImGui.TextColored(color, recommendation.Reason);
+            if (recommendation.Position != PositionHint.None)
+            {
+                ImGui.TextColored(color, $"→ {Humanise(recommendation.Position)}");
+            }
         }
-
-        if (!string.IsNullOrWhiteSpace(recommendation.Reason))
+        else if (recommendation.Type == RecommendationType.SwapBeast)
         {
+            ImGui.TextColored(color, $"魔獣変更: {recommendation.RecommendedBeast ?? "?"}");
             ImGui.TextWrapped(recommendation.Reason);
         }
+        else if (state.InCombat)
+        {
+            ImGui.TextColored(Green, "危険なし — 攻撃継続");
+        }
+        else
+        {
+            ImGui.TextColored(Grey, "待機中");
+        }
 
-        ImGui.TextUnformatted("Recommended Beast");
-        ImGui.SameLine();
-        ImGui.TextUnformatted(string.IsNullOrWhiteSpace(recommendation.RecommendedBeast) ? "—" : recommendation.RecommendedBeast!);
+        ImGui.Separator();
+
+        // One line per casting enemy — this is the "脳死" view.
+        var casts = this.engine.LastMechanics;
+        if (casts.Count == 0)
+        {
+            ImGui.TextColored(Grey, "詠唱なし");
+        }
+        else
+        {
+            foreach (var cast in casts)
+            {
+                var c = cast.IsThreat ? Colour(cast.Severity) : Grey;
+                var mark = cast.IsThreat ? "⚠" : "・";
+                ImGui.TextColored(c, $"{mark} {cast.EnemyName} — {cast.DisplayName}  {cast.Remaining:0.0}s");
+                if (!string.IsNullOrEmpty(cast.Advice))
+                {
+                    ImGui.TextColored(c, $"    {cast.Advice}");
+                }
+            }
+        }
 
         this.DrawDebug(state);
     }
+
+    private static Vector4 Colour(RecommendationPriority priority)
+        => priority switch
+        {
+            RecommendationPriority.Critical => Red,
+            RecommendationPriority.High => Orange,
+            RecommendationPriority.Medium => Yellow,
+            RecommendationPriority.Low => Green,
+            _ => Grey,
+        };
 
     private void DrawDebug(CrucibleState state)
     {

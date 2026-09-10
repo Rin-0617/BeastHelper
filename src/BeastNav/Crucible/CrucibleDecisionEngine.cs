@@ -35,18 +35,20 @@ public sealed class CrucibleDecisionEngine
         var mechanics = state.Enemies
             .Where(static enemy => enemy.IsCasting)
             .Select(this.mechanicDetector.Assess)
-            .Where(static assessment => assessment.Detected)
+            .Where(static assessment => assessment.IsCasting)
             .OrderByDescending(static assessment => assessment.Severity)
             .ToList();
         this.LastMechanics = mechanics;
 
-        if (mechanics.FirstOrDefault() is { Severity: >= RecommendationPriority.Medium } danger)
+        if (mechanics.FirstOrDefault(static m => m.IsThreat && m.Severity >= RecommendationPriority.Medium) is { } danger)
         {
             return new CrucibleRecommendation
             {
                 Type = RecommendationType.AvoidDanger,
                 Priority = danger.Severity,
-                Reason = $"Enemy casting {danger.DisplayName}",
+                Reason = string.IsNullOrEmpty(danger.EnemyName)
+                    ? $"詠唱: {danger.DisplayName}"
+                    : $"{danger.EnemyName}: {danger.DisplayName}",
                 Position = danger.Hint,
             };
         }
