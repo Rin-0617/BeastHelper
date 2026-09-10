@@ -208,6 +208,22 @@ public sealed class MainWindow : Window
         }
 
         ImGui.SameLine();
+        var autoCombat = this.configuration.CrucibleAutoCombat;
+        if (ImGui.Checkbox("自動戦闘 (実験的)", ref autoCombat))
+        {
+            this.configuration.CrucibleAutoCombat = autoCombat;
+            this.saveConfiguration();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "最寄りの敵をターゲットし、アクションバー1の使える技を自動で撃ちます。\n"
+                + "戦闘の自動化は FFXIV 規約違反です。自己責任で。\n"
+                + "回避中は戦闘より回避を優先します。");
+        }
+
+        ImGui.SameLine();
         var state = this.crucible.Current;
         var status = state.InCrucible
             ? $"闘獣練: 検出 ({state.DetectionSource}) · 敵 {state.Enemies.Count}"

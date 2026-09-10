@@ -27,6 +27,10 @@ public sealed class Configuration : IPluginConfiguration
     // in-combat movement automation (against the FFXIV ToS); off by default.
     public bool CrucibleAutoDodge { get; set; }
 
+    // EXPERIMENTAL. Target the nearest enemy and use action bar 1 automatically.
+    // Combat automation (against the FFXIV ToS); off by default.
+    public bool CrucibleAutoCombat { get; set; }
+
     // --- Manual "I don't need this pet" list (user controlled) ---------------
     // Toggled from the pet list. Never written by the bestiary sync.
     public List<uint> MarkedPetRowIds { get; set; } = [];
