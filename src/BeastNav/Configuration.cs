@@ -35,6 +35,11 @@ public sealed class Configuration : IPluginConfiguration
     // for the stage first (/beasthelper crucible record). Off by default.
     public bool CrucibleAutoRoute { get; set; }
 
+    // Hand the rotation to WrathCombo instead of the built-in action-bar scan.
+    // Off by default — WrathCombo has no Beastmaster rotation, so the scan is
+    // the sensible default for the Crucible.
+    public bool CrucibleUseWrathCombo { get; set; }
+
     // --- Manual "I don't need this pet" list (user controlled) ---------------
     // Toggled from the pet list. Never written by the bestiary sync.
     public List<uint> MarkedPetRowIds { get; set; } = [];

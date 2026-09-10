@@ -5,6 +5,7 @@ using Dalamud.Game.ClientState.Objects;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
+using LuminaAction = Lumina.Excel.Sheets.Action;
 
 namespace BeastNav.Crucible;
 
@@ -30,8 +31,10 @@ public sealed unsafe class CrucibleCombatAssist
     private readonly IObjectTable objectTable;
     private readonly ITargetManager targetManager;
     private readonly ICondition condition;
+    private readonly IDataManager dataManager;
     private readonly WrathComboBridge wrath;
     private readonly IPluginLog log;
+    private readonly Dictionary<uint, bool> aoeCache = [];
 
     private DateTime lastAttempt;
     private bool wrathRotationOn;
@@ -41,6 +44,7 @@ public sealed unsafe class CrucibleCombatAssist
         IObjectTable objectTable,
         ITargetManager targetManager,
         ICondition condition,
+        IDataManager dataManager,
         WrathComboBridge wrath,
         IPluginLog log)
     {
@@ -48,6 +52,7 @@ public sealed unsafe class CrucibleCombatAssist
         this.objectTable = objectTable;
         this.targetManager = targetManager;
         this.condition = condition;
+        this.dataManager = dataManager;
         this.wrath = wrath;
         this.log = log;
     }
@@ -74,8 +79,8 @@ public sealed unsafe class CrucibleCombatAssist
         var enabled = this.configuration.CrucibleAutoCombat && !suppressed && state.InCrucible && state.HasPlayer;
         var want = enabled && state.InCombat;
 
-        // Delegate the rotation to WrathCombo when it is installed.
-        if (this.configuration.CrucibleAutoCombat && this.wrath.Available)
+        // Delegate the rotation to WrathCombo only when explicitly asked.
+        if (this.configuration.CrucibleAutoCombat && this.configuration.CrucibleUseWrathCombo && this.wrath.Available)
         {
             if (want != this.wrathRotationOn)
             {
@@ -145,37 +150,75 @@ public sealed unsafe class CrucibleCombatAssist
             return intent;
         }
 
+        // Prefer AoE actions when the target sits in a cluster.
+        var clustered = state.Enemies.Count(e =>
+            e.CurrentHp > 0 && Vector3.DistanceSquared(e.Position, target.Position) <= 25f) >= 3;
+
         var anyUsable = false;
-        for (var slot = 0u; slot < SlotCount; slot++)
+        for (var pass = 0; pass < 2; pass++)
         {
-            var s = hotbar->GetSlotById(HotbarIndex, slot);
-            if (s is null || s->ApparentSlotType != RaptureHotbarModule.HotbarSlotType.Action)
+            for (var slot = 0u; slot < SlotCount; slot++)
             {
-                continue;
-            }
+                var s = hotbar->GetSlotById(HotbarIndex, slot);
+                if (s is null || s->ApparentSlotType != RaptureHotbarModule.HotbarSlotType.Action)
+                {
+                    continue;
+                }
 
-            var id = s->ApparentActionId;
-            if (id == 0)
-            {
-                continue;
-            }
+                var id = s->ApparentActionId;
+                if (id == 0)
+                {
+                    continue;
+                }
 
-            var status = actions->GetActionStatus(ActionType.Action, id, target.GameObjectId);
-            if (status == 0)
-            {
-                actions->UseAction(ActionType.Action, id, target.GameObjectId);
-                return intent with { InActionRange = true };
-            }
+                // First pass: only the preferred kind (AoE if clustered, else single-target).
+                if (pass == 0 && this.IsAoe(id) != clustered)
+                {
+                    continue;
+                }
 
-            // 566 = "target out of range"; anything else means it's just on cooldown.
-            if (status != 566)
-            {
-                anyUsable = true;
+                var status = actions->GetActionStatus(ActionType.Action, id, target.GameObjectId);
+                if (status == 0)
+                {
+                    actions->UseAction(ActionType.Action, id, target.GameObjectId);
+                    return intent with { InActionRange = true };
+                }
+
+                // 566 = "target out of range"; anything else is just a cooldown.
+                if (status != 566)
+                {
+                    anyUsable = true;
+                }
             }
         }
 
         intent = intent with { InActionRange = anyUsable };
         return intent;
+    }
+
+    private bool IsAoe(uint actionId)
+    {
+        if (this.aoeCache.TryGetValue(actionId, out var cached))
+        {
+            return cached;
+        }
+
+        var aoe = false;
+        try
+        {
+            var row = this.dataManager.GetExcelSheet<LuminaAction>()?.GetRowOrDefault(actionId);
+            if (row is not null)
+            {
+                aoe = row.Value.CastType != 1 || row.Value.EffectRange > 0;
+            }
+        }
+        catch
+        {
+            // Treat unknown actions as single-target.
+        }
+
+        this.aoeCache[actionId] = aoe;
+        return aoe;
     }
 
     private static CrucibleEnemy? NearestLive(CrucibleState state)
