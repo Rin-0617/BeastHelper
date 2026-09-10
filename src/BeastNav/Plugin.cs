@@ -34,9 +34,10 @@ public sealed class Plugin : IDalamudPlugin
     private readonly MainWindow mainWindow;
     private readonly DebugWindow debugWindow;
     private BeastDestination? pendingDestination;
-    private DateTime? mountAfterTerritoryChange;
-    private DateTime? mountTimeout;
-    private bool mountRequested;
+    private DateTime? pendingSettleUntil;
+    private DateTime? pendingMountGiveUp;
+    private DateTime? pendingMoveDeadline;
+    private DateTime? nextMountAttempt;
     private DateTime nextAutoNoteSync = DateTime.MinValue;
 
     public Plugin(
@@ -64,7 +65,7 @@ public sealed class Plugin : IDalamudPlugin
         this.configuration = this.pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         this.beastData = new BeastDataService(dataManager, log);
         this.destinations = new BeastDestinationService(pluginInterface, dataManager, this.beastData, log);
-        this.navmesh = new NavmeshService(pluginInterface, log, chat);
+        this.navmesh = new NavmeshService(pluginInterface, condition, log);
         this.teleport = new TeleportService(aetherytes, log);
         this.mount = new MountService(log);
         this.tamingState = new BeastTamingStateService(this.gameGui, this.beastData, this.configuration, log);
@@ -150,6 +151,7 @@ public sealed class Plugin : IDalamudPlugin
                 this.chat.Print($"[BeastHelper] Reloaded {this.beastData.Pets.Count} pets, {this.destinations.ManualCount} manual destinations, and {this.destinations.BuiltInCount} built-in destinations.");
                 break;
             case "stop":
+                this.pendingDestination = null;
                 this.navmesh.Stop();
                 break;
             default:
@@ -178,13 +180,26 @@ public sealed class Plugin : IDalamudPlugin
 
     private void TeleportToDestination(BeastDestination destination)
     {
+        var now = DateTime.UtcNow;
+
         if (this.clientState.TerritoryType == destination.TerritoryId)
         {
-            this.navmesh.MoveCloseTo(destination.Position, this.configuration.Fly, destination.Radius > 0 ? destination.Radius : this.configuration.StopDistance);
+            // Already in the right zone: no teleport and no settle wait, but
+            // still run the shared mount + navmesh-ready gate before moving so
+            // the behaviour matches the post-teleport path.
+            this.pendingDestination = destination;
+            this.pendingSettleUntil = null;
+            this.pendingMountGiveUp = now.AddSeconds(12);
+            this.pendingMoveDeadline = now.AddSeconds(20);
+            this.nextMountAttempt = null;
             return;
         }
 
         this.pendingDestination = destination;
+        this.pendingSettleUntil = null;
+        this.pendingMountGiveUp = null;
+        this.pendingMoveDeadline = null;
+        this.nextMountAttempt = null;
         if (!this.teleport.TryTeleport(destination.TerritoryId))
         {
             this.pendingDestination = null;
@@ -199,38 +214,90 @@ public sealed class Plugin : IDalamudPlugin
             return;
         }
 
-        this.mountAfterTerritoryChange = DateTime.UtcNow.AddSeconds(2);
-        this.mountTimeout = null;
-        this.mountRequested = false;
+        var now = DateTime.UtcNow;
+        this.pendingSettleUntil = now.AddSeconds(2);
+        this.pendingMountGiveUp = now.AddSeconds(14);
+        this.pendingMoveDeadline = now.AddSeconds(45);
+        this.nextMountAttempt = null;
     }
 
     private void OnFrameworkUpdate(IFramework framework)
     {
-        if (this.pendingDestination is { } destination)
-        {
-            var now = DateTime.UtcNow;
-            var isMounted = this.condition[ConditionFlag.Mounted] || this.condition[ConditionFlag.RidingPillion];
-            if (isMounted)
-            {
-                this.BeginPendingMove(destination);
-            }
-            else if (!this.mountRequested && this.mountAfterTerritoryChange is { } mountAt && now >= mountAt)
-            {
-                this.mountRequested = this.mount.TryMountRoulette();
-                this.mountTimeout = now.AddSeconds(8);
-            }
-            else if (this.mountRequested && this.mountTimeout is { } timeout && now >= timeout)
-            {
-                this.BeginPendingMove(destination);
-            }
-        }
+        this.UpdatePendingMove();
 
         if (this.objectTable.LocalPlayer is { } player)
         {
-            this.navmesh.CheckArrival(player.Position);
+            this.navmesh.Update(player.Position);
         }
 
         this.TryAutoSyncBeastNote();
+    }
+
+    private void UpdatePendingMove()
+    {
+        if (this.pendingDestination is not { } destination)
+        {
+            return;
+        }
+
+        // Not in the destination zone yet: the teleport is still in flight (or
+        // being cast). Touching vnavmesh here would move the character and
+        // cancel the teleport cast, stranding us in the wrong zone.
+        if (this.clientState.TerritoryType != destination.TerritoryId)
+        {
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        var force = this.pendingMoveDeadline is { } deadline && now >= deadline;
+
+        // Post-teleport settle window: the freshly loaded zone's navmesh may
+        // still be streaming in, and moving too early fails with
+        // "failed to find polygon on a mesh". Applies even when the mount was
+        // kept through the teleport (FFXIV keeps you mounted).
+        if (!force && this.pendingSettleUntil is { } settleUntil && now < settleUntil)
+        {
+            return;
+        }
+
+        // Hold until the player is back in control and vnavmesh has a navmesh for
+        // the current zone, otherwise the pathfind has nothing to work with.
+        if (!force && (this.condition[ConditionFlag.BetweenAreas]
+            || this.condition[ConditionFlag.BetweenAreas51]
+            || this.condition[ConditionFlag.OccupiedInCutSceneEvent]
+            || !this.navmesh.IsReady()))
+        {
+            return;
+        }
+
+        var isMounted = this.condition[ConditionFlag.Mounted] || this.condition[ConditionFlag.RidingPillion];
+
+        // Flight needs a mount; ground travel does not, so only stall for a
+        // mount when the user asked to fly.
+        var needMount = this.configuration.Fly && !isMounted;
+        var canStillMount = !force && this.pendingMountGiveUp is { } giveUp && now < giveUp;
+
+        if (needMount && canStillMount)
+        {
+            if (this.nextMountAttempt is not { } next || now >= next)
+            {
+                var accepted = this.mount.TryMountRoulette();
+                this.nextMountAttempt = now.AddSeconds(accepted ? 10 : 3);
+                if (!accepted)
+                {
+                    this.log.Information("[BeastHelper] Mount Roulette not usable yet; will retry.");
+                }
+            }
+
+            return;
+        }
+
+        if (needMount)
+        {
+            this.log.Information("[BeastHelper] Could not mount in time; moving on foot.");
+        }
+
+        this.BeginPendingMove(destination);
     }
 
     private void TryAutoSyncBeastNote()
@@ -259,9 +326,10 @@ public sealed class Plugin : IDalamudPlugin
     private void BeginPendingMove(BeastDestination destination)
     {
         this.pendingDestination = null;
-        this.mountAfterTerritoryChange = null;
-        this.mountTimeout = null;
-        this.mountRequested = false;
+        this.pendingSettleUntil = null;
+        this.pendingMountGiveUp = null;
+        this.pendingMoveDeadline = null;
+        this.nextMountAttempt = null;
         this.navmesh.MoveCloseTo(destination.Position, this.configuration.Fly, destination.Radius > 0 ? destination.Radius : this.configuration.StopDistance);
     }
 

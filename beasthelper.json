@@ -3,7 +3,7 @@
     "Author": "Rin",
     "Name": "BeastHelper",
     "InternalName": "BeastHelper",
-    "AssemblyVersion": "0.1.1.0",
+    "AssemblyVersion": "0.1.2.0",
     "Description": "Navigate to known Beastmaster recruit enemies from Beast Log data.",
     "ApplicableVersion": "any",
     "RepoUrl": "https://github.com/Rin-0617/BeastHelper",
@@ -16,8 +16,8 @@
     ],
     "IsHide": false,
     "IsTestingExclusive": false,
-    "DownloadLinkInstall": "https://github.com/Rin-0617/BeastHelper/releases/download/v0.1.1/BeastHelper-v0.1.1.zip",
-    "DownloadLinkUpdate": "https://github.com/Rin-0617/BeastHelper/releases/download/v0.1.1/BeastHelper-v0.1.1.zip",
-    "LastUpdate": "1789000000"
+    "DownloadLinkInstall": "https://github.com/Rin-0617/BeastHelper/releases/download/v0.1.2/BeastHelper-v0.1.2.zip",
+    "DownloadLinkUpdate": "https://github.com/Rin-0617/BeastHelper/releases/download/v0.1.2/BeastHelper-v0.1.2.zip",
+    "LastUpdate": 1789044576
   }
 ]

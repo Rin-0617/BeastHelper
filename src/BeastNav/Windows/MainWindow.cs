@@ -294,14 +294,9 @@ public sealed class MainWindow : Window
             return;
         }
 
-        if (this.clientState.TerritoryType != destination.TerritoryId)
-        {
-            this.teleport(destination);
-            return;
-        }
-
-        var range = MathF.Max(1f, destination.Radius > 0 ? destination.Radius : this.configuration.StopDistance);
-        this.navmesh.MoveCloseTo(destination.Position, this.configuration.Fly, range);
+        // The plugin decides whether this needs a teleport first or just a move
+        // in the current zone; either way it runs the same mount + ready gate.
+        this.teleport(destination);
     }
 
     private void OpenMap(BeastDestination? destination)
