@@ -100,7 +100,7 @@ public sealed class Plugin : IDalamudPlugin
         this.crucibleRoute = new CrucibleRoute(pluginInterface, log);
         this.crucibleActuator = new CrucibleActuator(this.configuration, this.navmesh, this.crucibleRoute, this.condition, log);
         this.crucibleCombat = new CrucibleCombatAssist(
-            this.configuration, this.objectTable, targetManager, this.condition, dataManager, new WrathComboBridge(pluginInterface, log), log);
+            this.configuration, this.objectTable, targetManager, this.condition, new WrathComboBridge(pluginInterface, log), log);
         this.crucibleActionRecorder = new CrucibleActionRecorder(pluginInterface, gameInterop, dataManager, this.crucibleReader, log);
         this.crucibleCastLog = new CrucibleCastLog(pluginInterface, dataManager, log);
         this.crucibleOverlay = new CrucibleOverlay(

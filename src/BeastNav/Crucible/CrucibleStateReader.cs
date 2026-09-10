@@ -340,6 +340,8 @@ public sealed unsafe class CrucibleStateReader
                 CastCurrent = npc.CurrentCastTime,
                 CastTotal = npc.TotalCastTime,
                 CastTargetsPlayer = npc.IsCasting && npc.CastTargetObjectId == player.GameObjectId,
+                TargetObjectId = npc.TargetObjectId,
+                AggroOnPlayer = npc.TargetObjectId == player.GameObjectId,
                 Distance = distance,
                 Position = npc.Position,
                 Rotation = npc.Rotation,

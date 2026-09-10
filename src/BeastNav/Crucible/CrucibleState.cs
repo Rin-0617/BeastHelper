@@ -93,6 +93,12 @@ public sealed record CrucibleEnemy
 
     public bool CastTargetsPlayer { get; init; }
 
+    /// <summary>What this enemy is currently targeting (0 if nothing).</summary>
+    public ulong TargetObjectId { get; init; }
+
+    /// <summary>The enemy is targeting the player.</summary>
+    public bool AggroOnPlayer { get; init; }
+
     /// <summary>Distance from the player, in yalms.</summary>
     public float Distance { get; init; }
 

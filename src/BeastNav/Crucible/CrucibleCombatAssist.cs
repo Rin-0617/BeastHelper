@@ -4,50 +4,52 @@ using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
-using FFXIVClientStructs.FFXIV.Client.UI.Misc;
-using LuminaAction = Lumina.Excel.Sheets.Action;
 
 namespace BeastNav.Crucible;
 
 /// <summary>
-/// The opt-in combat autopilot: targets the nearest live enemy and fires the
-/// first ready action from action bar 1 each opening. Off by default; dodging
-/// takes priority over it.
+/// The opt-in combat autopilot for 闘獣練 第一盤. It targets the nearest live
+/// enemy and drives the tank-beast kit directly (the actions can't be put on a
+/// hotbar): the axe combo, an AoE line when packs are stacked, the beast art on
+/// cooldown, the gap closer, and — the point of the exercise — the enmity tools
+/// <c>ひきつけろ</c> and <c>ちょうはつ</c> when something breaks off onto the beast.
 /// </summary>
 /// <remarks>
-/// This drives combat actions automatically, which is against the FFXIV ToS. It
-/// exists so the whole first-stage loop (travel, dodge, fight) can run hands-off
-/// while the dodge assist is being tuned.
+/// Combat automation, against the FFXIV ToS. Off by default; dodging pauses it.
 /// </remarks>
 public sealed unsafe class CrucibleCombatAssist
 {
-    // Action bar 1 (0-indexed), all twelve slots.
-    private const uint HotbarIndex = 0;
-    private const uint SlotCount = 12;
+    // --- 闘獣練 第一盤 tank-beast action ids (from crucible-my-actions.json) ---
+    private static readonly uint[] Combo = [44879, 44883, 44885]; // スマッシュ → アクスバイト → シールドスプリッター
+    private static readonly uint[] AoeGcd = [44887, 44884, 44888]; // ミストラル / アバランチ / スピニング アクス
+    private static readonly uint[] OffGcd = [44886, 44905, 47093]; // 魔獣技 / きあい / おおわざ
+    private const uint GapCloser = 44893; // シールドチャージ
+    private const uint Provoke = 46750;   // ちょうはつ
+    private const uint DrawIn = 46751;    // ひきつけろ
 
-    private static readonly TimeSpan MinInterval = TimeSpan.FromMilliseconds(150);
+    private const float EnmityRange = 25f;
+    private const float GapCloserRange = 12f;
+    private const float ClusterRangeSq = 25f;
+    private static readonly TimeSpan MinInterval = TimeSpan.FromMilliseconds(120);
+    private static readonly TimeSpan ComboWindow = TimeSpan.FromSeconds(8);
 
     private readonly Configuration configuration;
     private readonly IObjectTable objectTable;
     private readonly ITargetManager targetManager;
     private readonly ICondition condition;
-    private readonly IDataManager dataManager;
     private readonly WrathComboBridge wrath;
     private readonly IPluginLog log;
-    private readonly Dictionary<uint, bool> aoeCache = [];
 
     private DateTime lastAttempt;
+    private DateTime comboAt;
+    private int comboStep;
     private bool wrathRotationOn;
-
-    /// <summary>Short human status for the overlay, e.g. "firing 46921" or "no ready action".</summary>
-    public string Status { get; private set; } = "idle";
 
     public CrucibleCombatAssist(
         Configuration configuration,
         IObjectTable objectTable,
         ITargetManager targetManager,
         ICondition condition,
-        IDataManager dataManager,
         WrathComboBridge wrath,
         IPluginLog log)
     {
@@ -55,12 +57,13 @@ public sealed unsafe class CrucibleCombatAssist
         this.objectTable = objectTable;
         this.targetManager = targetManager;
         this.condition = condition;
-        this.dataManager = dataManager;
         this.wrath = wrath;
         this.log = log;
     }
 
-    /// <summary>Turn off WrathCombo auto-rotation if we had turned it on.</summary>
+    /// <summary>Short human status for the overlay.</summary>
+    public string Status { get; private set; } = "off";
+
     public void Release()
     {
         if (this.wrathRotationOn)
@@ -72,17 +75,11 @@ public sealed unsafe class CrucibleCombatAssist
         this.wrath.Release();
     }
 
-    /// <summary>
-    /// Targets the nearest enemy and fires an action. Returns what it wants from
-    /// the movement brain: whether it has a target and whether that target is in
-    /// range of anything on the bar (if not, the autopilot should close the gap).
-    /// </summary>
     public CombatIntent Tick(CrucibleState state, bool suppressed)
     {
         var enabled = this.configuration.CrucibleAutoCombat && !suppressed && state.InCrucible && state.HasPlayer;
         var want = enabled && state.InCombat;
 
-        // Delegate the rotation to WrathCombo only when explicitly asked.
         if (this.configuration.CrucibleAutoCombat && this.configuration.CrucibleUseWrathCombo && this.wrath.Available)
         {
             if (want != this.wrathRotationOn)
@@ -92,16 +89,7 @@ public sealed unsafe class CrucibleCombatAssist
             }
 
             this.Status = want ? "WrathCombo rotation on" : "WrathCombo (out of combat)";
-            var t = NearestLive(state);
-            return t is null
-                ? CombatIntent.None
-                : new CombatIntent
-                {
-                    HasTarget = true,
-                    TargetPosition = t.Position,
-                    TargetDistance = t.Distance,
-                    InActionRange = t.Distance <= 22f,
-                };
+            return this.Intent(state);
         }
 
         if (this.wrathRotationOn)
@@ -116,133 +104,164 @@ public sealed unsafe class CrucibleCombatAssist
             return CombatIntent.None;
         }
 
+        var intent = this.Intent(state);
         if (!want)
         {
             this.Status = suppressed ? "paused (dodge)" : "waiting for combat";
-            return NearestLive(state) is { } near
-                ? new CombatIntent { HasTarget = true, TargetPosition = near.Position, TargetDistance = near.Distance }
-                : CombatIntent.None;
+            return intent;
         }
 
-        var target = NearestLive(state);
-        if (target is null)
+        if (!intent.HasTarget)
         {
             this.Status = "no enemy";
-            return CombatIntent.None;
+            return intent;
         }
 
-        if (this.targetManager.Target?.GameObjectId != target.GameObjectId)
-        {
-            var obj = this.objectTable.FirstOrDefault(o => o.GameObjectId == target.GameObjectId);
-            if (obj is not null)
-            {
-                this.targetManager.Target = obj;
-            }
-        }
+        var target = NearestLive(state)!;
+        this.FaceTarget(target);
 
-        var intent = new CombatIntent { HasTarget = true, TargetPosition = target.Position, TargetDistance = target.Distance };
-
-        if (this.condition[ConditionFlag.BetweenAreas]
-            || this.condition[ConditionFlag.BetweenAreas51]
-            || this.condition[ConditionFlag.Casting])
+        if (this.condition[ConditionFlag.BetweenAreas] || this.condition[ConditionFlag.BetweenAreas51] || this.condition[ConditionFlag.Casting])
         {
             this.Status = "occupied";
             return intent;
         }
 
-        var now = DateTime.UtcNow;
-        if (now - this.lastAttempt < MinInterval)
-        {
-            return intent;
-        }
-
-        this.lastAttempt = now;
-
         var actions = ActionManager.Instance();
-        var hotbar = RaptureHotbarModule.Instance();
-        if (actions is null || hotbar is null)
+        if (actions is null)
         {
             this.Status = "no ActionManager";
             return intent;
         }
 
-        if (actions->AnimationLock > 0.1f)
+        // Enmity tools run regardless of the GCD.
+        if (this.TryEnmity(state, actions, target))
         {
-            return intent;
+            return intent with { InActionRange = true };
         }
 
-        // Prefer AoE actions when the target sits in a cluster.
+        var now = DateTime.UtcNow;
+        if (actions->AnimationLock > 0.1f || now - this.lastAttempt < MinInterval)
+        {
+            return intent with { InActionRange = target.Distance <= EnmityRange };
+        }
+
+        this.lastAttempt = now;
+
         var clustered = state.Enemies.Count(e =>
-            e.CurrentHp > 0 && Vector3.DistanceSquared(e.Position, target.Position) <= 25f) >= 3;
+            e.CurrentHp > 0 && Vector3.DistanceSquared(e.Position, target.Position) <= ClusterRangeSq) >= 3;
 
-        var anyUsable = false;
-        for (var pass = 0; pass < 2; pass++)
+        // GCD.
+        if (Ready(actions, Combo[0]))
         {
-            for (var slot = 0u; slot < SlotCount; slot++)
+            if (target.Distance > GapCloserRange && Ready(actions, GapCloser))
             {
-                var s = hotbar->GetSlotById(HotbarIndex, slot);
-                if (s is null || s->ApparentSlotType != RaptureHotbarModule.HotbarSlotType.Action)
-                {
-                    continue;
-                }
-
-                var id = s->ApparentActionId;
-                if (id == 0)
-                {
-                    continue;
-                }
-
-                // First pass: only the preferred kind (AoE if clustered, else single-target).
-                if (pass == 0 && this.IsAoe(id) != clustered)
-                {
-                    continue;
-                }
-
-                var status = actions->GetActionStatus(ActionType.Action, id, target.GameObjectId);
-                if (status == 0)
-                {
-                    actions->UseAction(ActionType.Action, id, target.GameObjectId);
-                    this.Status = $"firing {id}";
-                    return intent with { InActionRange = true };
-                }
-
-                // 566 = "target out of range"; anything else is just a cooldown.
-                if (status != 566)
-                {
-                    anyUsable = true;
-                }
+                this.Use(actions, GapCloser, target, "シールドチャージ");
             }
+            else if (clustered && this.FirstReady(actions, AoeGcd, target) is { } aoe)
+            {
+                this.Use(actions, aoe, target, "AoE");
+            }
+            else
+            {
+                this.Use(actions, this.NextComboAction(now), target, "combo");
+            }
+
+            return intent with { InActionRange = true };
         }
 
-        this.Status = anyUsable ? "all on cooldown" : "nothing in range / on bar";
-        intent = intent with { InActionRange = anyUsable };
-        return intent;
+        // oGCD weave.
+        if (this.FirstReady(actions, OffGcd, target) is { } og)
+        {
+            this.Use(actions, og, target, "oGCD");
+            return intent with { InActionRange = true };
+        }
+
+        this.Status = "GCD rolling";
+        return intent with { InActionRange = true };
     }
 
-    private bool IsAoe(uint actionId)
+    private bool TryEnmity(CrucibleState state, ActionManager* actions, CrucibleEnemy target)
     {
-        if (this.aoeCache.TryGetValue(actionId, out var cached))
+        var loose = state.Enemies
+            .Where(e => e.CurrentHp > 0 && !e.AggroOnPlayer && e.Distance <= EnmityRange)
+            .ToList();
+        if (loose.Count == 0)
         {
-            return cached;
+            return false;
         }
 
-        var aoe = false;
-        try
+        if (loose.Count >= 2 && Ready(actions, DrawIn))
         {
-            var row = this.dataManager.GetExcelSheet<LuminaAction>()?.GetRowOrDefault(actionId);
-            if (row is not null)
+            this.Use(actions, DrawIn, target, "ひきつけろ");
+            return true;
+        }
+
+        var peel = loose.OrderBy(e => e.Distance).First();
+        if (Ready(actions, Provoke))
+        {
+            var obj = this.objectTable.FirstOrDefault(o => o.GameObjectId == peel.GameObjectId);
+            var targetId = obj?.GameObjectId ?? peel.GameObjectId;
+            actions->UseAction(ActionType.Action, Provoke, targetId);
+            this.Status = $"ちょうはつ → {peel.Name}";
+            return true;
+        }
+
+        return false;
+    }
+
+    private uint NextComboAction(DateTime now)
+    {
+        if (now - this.comboAt > ComboWindow)
+        {
+            this.comboStep = 0;
+        }
+
+        var id = Combo[this.comboStep % Combo.Length];
+        this.comboStep = (this.comboStep + 1) % Combo.Length;
+        this.comboAt = now;
+        return id;
+    }
+
+    private uint? FirstReady(ActionManager* actions, uint[] ids, CrucibleEnemy target)
+    {
+        foreach (var id in ids)
+        {
+            if (actions->GetActionStatus(ActionType.Action, id, target.GameObjectId) == 0)
             {
-                aoe = row.Value.CastType != 1 || row.Value.EffectRange > 0;
+                return id;
             }
         }
-        catch
+
+        return null;
+    }
+
+    private void Use(ActionManager* actions, uint id, CrucibleEnemy target, string label)
+    {
+        actions->UseAction(ActionType.Action, id, target.GameObjectId);
+        this.Status = $"{label}: {id}";
+    }
+
+    private void FaceTarget(CrucibleEnemy target)
+    {
+        if (this.targetManager.Target?.GameObjectId == target.GameObjectId)
         {
-            // Treat unknown actions as single-target.
+            return;
         }
 
-        this.aoeCache[actionId] = aoe;
-        return aoe;
+        var obj = this.objectTable.FirstOrDefault(o => o.GameObjectId == target.GameObjectId);
+        if (obj is not null)
+        {
+            this.targetManager.Target = obj;
+        }
     }
+
+    private CombatIntent Intent(CrucibleState state)
+        => NearestLive(state) is { } t
+            ? new CombatIntent { HasTarget = true, TargetPosition = t.Position, TargetDistance = t.Distance }
+            : CombatIntent.None;
+
+    private static bool Ready(ActionManager* actions, uint id)
+        => actions->GetActionStatus(ActionType.Action, id) == 0;
 
     private static CrucibleEnemy? NearestLive(CrucibleState state)
         => state.Enemies
@@ -261,6 +280,6 @@ public readonly record struct CombatIntent
 
     public float TargetDistance { get; init; }
 
-    /// <summary>The target is in range of at least one bar action (no need to close in).</summary>
+    /// <summary>The target is close enough to act on (no need to close in).</summary>
     public bool InActionRange { get; init; }
 }
