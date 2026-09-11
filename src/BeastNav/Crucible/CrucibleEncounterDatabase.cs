@@ -38,6 +38,22 @@ public sealed class CrucibleEncounterDatabase
             [46866] = new(MechanicKind.GroundAoe, "テュムラス (範囲)", RecommendationPriority.High, PositionHint.MoveOutside),
             // ベーンマイト・ピース — デッドリースラスト (対象への大ダメージ)
             [46906] = new(MechanicKind.Tankbuster, "デッドリースラスト (被弾注意)", RecommendationPriority.Medium, PositionHint.None),
+            // ビショップ・ピース — ブラックエラプション。Action シートでは単体扱い
+            // (castType 1) だが、実際は自分中心の範囲攻撃。GeometryOverrides で
+            // ダッジソルバにも円として扱わせる。
+            [46873] = new(MechanicKind.GroundAoe, "ブラックエラプション (自己中心範囲)", RecommendationPriority.High, PositionHint.MoveAway),
+        };
+
+    /// <summary>
+    /// Geometry corrections for casts whose <c>Action</c> sheet shape lies —
+    /// most often a point-blank burst filed as <c>CastType 1</c> (single-target).
+    /// Found by watching <c>crucible-observations.jsonl</c> "resolved" hits on
+    /// casts the shape-based solver had judged safe.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<uint, GeometryOverride> GeometryOverrides =
+        new Dictionary<uint, GeometryOverride>
+        {
+            [46873] = new GeometryOverride(DangerKind.Circle, 8f), // ブラックエラプション
         };
 
     public CrucibleEncounterDatabase(BeastDataService beastData, IDataManager dataManager, IPluginLog log)
@@ -49,6 +65,9 @@ public sealed class CrucibleEncounterDatabase
 
     public bool TryGetKnownMechanic(uint castActionId, out KnownMechanic mechanic)
         => KnownMechanics.TryGetValue(castActionId, out mechanic);
+
+    public GeometryOverride? TryGetGeometryOverride(uint castActionId)
+        => GeometryOverrides.TryGetValue(castActionId, out var g) ? g : null;
 
     /// <summary>
     /// Falls back to the game's <c>Action</c> sheet to describe an unknown cast
@@ -152,6 +171,8 @@ public sealed class CrucibleEncounterDatabase
     }
 
     public readonly record struct KnownMechanic(MechanicKind Kind, string DisplayName, RecommendationPriority Severity, PositionHint Hint);
+
+    public readonly record struct GeometryOverride(DangerKind Kind, float Size);
 }
 
 /// <summary>Shape numbers straight from the <c>Action</c> sheet (yalms).</summary>

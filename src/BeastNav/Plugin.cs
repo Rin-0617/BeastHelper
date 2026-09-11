@@ -35,7 +35,6 @@ public sealed class Plugin : IDalamudPlugin
     private readonly CrucibleStateReader crucibleReader;
     private readonly CrucibleDecisionEngine crucibleEngine;
     private readonly CrucibleDodgeSolver crucibleDodgeSolver;
-    private readonly CrucibleRoute crucibleRoute;
     private readonly CrucibleActuator crucibleActuator;
     private readonly CrucibleActionRecorder crucibleActionRecorder;
     private readonly CrucibleCastLog crucibleCastLog;
@@ -96,8 +95,7 @@ public sealed class Plugin : IDalamudPlugin
             new CrucibleMechanicDetector(crucibleEncounters),
             new CrucibleBeastSelector(this.beastData, crucibleEncounters));
         this.crucibleDodgeSolver = new CrucibleDodgeSolver(crucibleEncounters);
-        this.crucibleRoute = new CrucibleRoute(pluginInterface, log);
-        this.crucibleActuator = new CrucibleActuator(this.configuration, this.navmesh, this.crucibleRoute, this.condition, log);
+        this.crucibleActuator = new CrucibleActuator(this.configuration, this.navmesh, this.condition, log);
         this.crucibleActionRecorder = new CrucibleActionRecorder(pluginInterface, gameInterop, dataManager, this.crucibleReader, log);
         this.crucibleCastLog = new CrucibleCastLog(pluginInterface, dataManager, log);
         this.crucibleOverlay = new CrucibleOverlay(
@@ -234,16 +232,6 @@ public sealed class Plugin : IDalamudPlugin
                 this.crucibleReader.ForceActive = !this.crucibleReader.ForceActive;
                 this.chat.Print($"[BeastHelper] Crucible force-active: {this.crucibleReader.ForceActive} (for replay observation)");
                 break;
-            case "record":
-                if (this.objectTable.LocalPlayer is { } rp)
-                {
-                    this.crucibleRoute.ToggleRecording(this.clientState.TerritoryType, rp.Position);
-                    this.chat.Print(this.crucibleRoute.Recording
-                        ? "[BeastHelper] Recording a Crucible route. Walk the stage, then run this again to save."
-                        : $"[BeastHelper] Saved {this.crucibleRoute.Count} route waypoints for territory {this.clientState.TerritoryType}.");
-                }
-
-                break;
             default:
                 this.configuration.CrucibleOverlayEnabled = !this.configuration.CrucibleOverlayEnabled;
                 this.SaveConfiguration();
@@ -326,11 +314,6 @@ public sealed class Plugin : IDalamudPlugin
         var crucibleState = this.crucibleReader.Current;
         this.crucibleCastLog.Observe(crucibleState);
         var dodgePlan = this.crucibleDodgeSolver.Solve(crucibleState);
-        if (crucibleState.InCrucible)
-        {
-            this.crucibleRoute.Sample(crucibleState.PlayerPosition);
-        }
-
         this.crucibleActuator.Tick(crucibleState, dodgePlan);
         this.crucibleOverlay.IsOpen = this.crucibleOverlay.ShouldBeOpen;
         this.TryAutoSyncBeastNote();

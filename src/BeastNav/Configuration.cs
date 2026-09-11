@@ -20,16 +20,13 @@ public sealed class Configuration : IPluginConfiguration
     public bool CrucibleOverlayAlwaysShow { get; set; }
 
     // Paint danger shapes and the computed dodge direction on the game screen.
-    // Dry-run only — it never moves the character.
-    public bool CrucibleZonePaint { get; set; } = true;
+    // Dry-run only — it never moves the character. Off by default; it gets in
+    // the way once auto-dodge is doing the actual avoiding.
+    public bool CrucibleZonePaint { get; set; }
 
     // EXPERIMENTAL. Automatically walk out of danger during casts. This is
     // in-combat movement automation (against the FFXIV ToS); off by default.
     public bool CrucibleAutoDodge { get; set; }
-
-    // EXPERIMENTAL. Walk the recorded route between packs. Needs a route recorded
-    // for the stage first (/beasthelper crucible record). Off by default.
-    public bool CrucibleAutoRoute { get; set; }
 
     // --- Manual "I don't need this pet" list (user controlled) ---------------
     // Toggled from the pet list. Never written by the bestiary sync.

@@ -20,6 +20,7 @@ public sealed class CrucibleDodgeSolver
     // Default line half-width / cone half-angle when the sheet doesn't say.
     private const float DefaultLineHalfWidth = 3f;
     private const float DefaultConeHalfAngle = 1.0f; // ~57 degrees
+    private const float DefaultDonutInnerRadius = 6f;
 
     // A circle bigger than this can't be walked out of in an arena — treat it as
     // a raidwide: still shown, but not something to path around.
@@ -141,9 +142,48 @@ public sealed class CrucibleDodgeSolver
             return null;
         }
 
-        var g = this.database.ReadGeometry(enemy.CastActionId);
         var origin = Flat(enemy.Position);
         var forward = new Vector2(MathF.Sin(enemy.Rotation), MathF.Cos(enemy.Rotation));
+
+        // A curated correction wins over the sheet: some casts (usually a
+        // point-blank burst) are filed as single-target but actually hit an area.
+        if (this.database.TryGetGeometryOverride(enemy.CastActionId) is { } o)
+        {
+            return o.Kind switch
+            {
+                DangerKind.Circle => new DangerShape
+                {
+                    Kind = DangerKind.Circle,
+                    Origin = origin,
+                    Radius = o.Size + Margin,
+                    SecondsLeft = enemy.CastRemaining,
+                    Name = enemy.Name,
+                },
+                DangerKind.Line => new DangerShape
+                {
+                    Kind = DangerKind.Line,
+                    Origin = origin,
+                    Forward = forward,
+                    Radius = o.Size,
+                    HalfWidth = DefaultLineHalfWidth + Margin,
+                    SecondsLeft = enemy.CastRemaining,
+                    Name = enemy.Name,
+                },
+                DangerKind.Cone => new DangerShape
+                {
+                    Kind = DangerKind.Cone,
+                    Origin = origin,
+                    Forward = forward,
+                    Radius = o.Size + Margin,
+                    HalfAngle = DefaultConeHalfAngle,
+                    SecondsLeft = enemy.CastRemaining,
+                    Name = enemy.Name,
+                },
+                _ => null,
+            };
+        }
+
+        var g = this.database.ReadGeometry(enemy.CastActionId);
 
         return g.CastType switch
         {
@@ -175,6 +215,15 @@ public sealed class CrucibleDodgeSolver
                 SecondsLeft = enemy.CastRemaining,
                 Name = enemy.Name,
             },
+            10 => new DangerShape
+            {
+                Kind = DangerKind.Donut,
+                Origin = origin,
+                Radius = MathF.Max(8f, g.Size) + Margin,
+                InnerRadius = MathF.Max(0f, DefaultDonutInnerRadius - Margin),
+                SecondsLeft = enemy.CastRemaining,
+                Name = enemy.Name,
+            },
             _ => null,
         };
     }
@@ -198,6 +247,7 @@ public enum DangerKind
     Circle,
     Line,
     Cone,
+    Donut,
 }
 
 /// <summary>A danger area in the arena's XZ plane.</summary>
@@ -220,6 +270,9 @@ public sealed record DangerShape
     /// <summary>Cone half-angle (radians).</summary>
     public float HalfAngle { get; init; }
 
+    /// <summary>Donut inner radius (yalms) — safe ground starts inside this.</summary>
+    public float InnerRadius { get; init; }
+
     public float SecondsLeft { get; init; }
 
     public string Name { get; init; } = string.Empty;
@@ -232,6 +285,7 @@ public sealed record DangerShape
             DangerKind.Circle => rel.LengthSquared() <= this.Radius * this.Radius,
             DangerKind.Line => LineContains(rel),
             DangerKind.Cone => ConeContains(rel),
+            DangerKind.Donut => rel.Length() is var d && d <= this.Radius && d >= this.InnerRadius,
             _ => false,
         };
 

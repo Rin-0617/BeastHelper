@@ -64,7 +64,7 @@ public sealed class CrucibleOverlay : Window
         StatusLine("Auto Dodge", danger ? "ALERT" : "READY");
         StatusLine("Danger Detected", danger ? "YES" : "no", danger);
 
-        if (this.configuration.CrucibleAutoDodge || this.configuration.CrucibleAutoRoute)
+        if (this.configuration.CrucibleAutoDodge)
         {
             ImGui.Separator();
             var hp = state.HasPlayer ? $"{state.PlayerHpFraction:P0}" : "?";

@@ -208,22 +208,6 @@ public sealed class MainWindow : Window
         }
 
         ImGui.SameLine();
-        var autoRoute = this.configuration.CrucibleAutoRoute;
-        if (ImGui.Checkbox("自動ルート (実験的)", ref autoRoute))
-        {
-            this.configuration.CrucibleAutoRoute = autoRoute;
-            this.saveConfiguration();
-        }
-
-        if (ImGui.IsItemHovered())
-        {
-            ImGui.SetTooltip(
-                "記録したルートに沿ってパック間を自動移動します。\n"
-                + "先に /beasthelper crucible record でステージのルートを1周録ってください。\n"
-                + "戦闘中・回避中は移動しません。");
-        }
-
-        ImGui.SameLine();
         var state = this.crucible.Current;
         var status = state.InCrucible
             ? $"闘獣練: 検出 ({state.DetectionSource}) · 敵 {state.Enemies.Count}"
