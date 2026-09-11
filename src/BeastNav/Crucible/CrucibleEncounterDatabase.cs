@@ -1,4 +1,6 @@
+using System.Text.Json;
 using BeastNav.Services;
+using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using LuminaAction = Lumina.Excel.Sheets.Action;
 
@@ -17,9 +19,20 @@ namespace BeastNav.Crucible;
 /// </remarks>
 public sealed class CrucibleEncounterDatabase
 {
+    private const string LearnedFileName = "crucible-learned-geometry.json";
+
+    // Minimum damage to count as evidence, and the safety margin added past the
+    // distance we actually got hit from.
+    private const float MinHitFraction = 0.02f;
+    private const float LearnMargin = 3f;
+    private const float MinLearnedRadius = 6f;
+
     private readonly BeastDataService beastData;
     private readonly IDataManager dataManager;
+    private readonly IDalamudPluginInterface pluginInterface;
     private readonly IPluginLog log;
+    private readonly Dictionary<uint, GeometryOverride> learned = [];
+    private readonly JsonSerializerOptions learnedJson = new() { WriteIndented = true };
 
     /// <summary>
     /// Curated overrides: enemy cast action id → how a human should react.
@@ -56,18 +69,114 @@ public sealed class CrucibleEncounterDatabase
             [46873] = new GeometryOverride(DangerKind.Circle, 8f), // ブラックエラプション
         };
 
-    public CrucibleEncounterDatabase(BeastDataService beastData, IDataManager dataManager, IPluginLog log)
+    public CrucibleEncounterDatabase(
+        BeastDataService beastData,
+        IDataManager dataManager,
+        IDalamudPluginInterface pluginInterface,
+        IPluginLog log)
     {
         this.beastData = beastData;
         this.dataManager = dataManager;
+        this.pluginInterface = pluginInterface;
         this.log = log;
+        this.LoadLearned();
     }
 
     public bool TryGetKnownMechanic(uint castActionId, out KnownMechanic mechanic)
         => KnownMechanics.TryGetValue(castActionId, out mechanic);
 
     public GeometryOverride? TryGetGeometryOverride(uint castActionId)
-        => GeometryOverrides.TryGetValue(castActionId, out var g) ? g : null;
+        => GeometryOverrides.TryGetValue(castActionId, out var g) ? g
+            : this.learned.TryGetValue(castActionId, out var l) ? l
+            : null;
+
+    /// <summary>
+    /// Real-time learning: fed one resolved cast at a time (see
+    /// <see cref="CrucibleCastLog"/>). If the player took real damage from a cast
+    /// that wasn't aimed at them and isn't already shaped as an AoE, that is
+    /// exactly what a mistagged point-blank burst (like ブラックエラプション)
+    /// looks like — so it is auto-classified as a circle sized to the distance we
+    /// got hit from, persisted, and avoided from then on without anyone having to
+    /// spot and hand-curate it.
+    /// </summary>
+    public void ObserveResolution(uint actionId, bool castTargetsPlayer, float casterDistanceAtStart, bool hit, float hpLossFraction)
+    {
+        if (actionId == 0 || !hit || castTargetsPlayer || hpLossFraction < MinHitFraction)
+        {
+            return;
+        }
+
+        if (GeometryOverrides.ContainsKey(actionId))
+        {
+            return; // already curated by hand
+        }
+
+        var shape = this.DescribeCast(actionId);
+        if (shape is not (ActionShape.Unknown or ActionShape.SingleTargetOrOther))
+        {
+            return; // already correctly shaped — this was just an ordinary hit
+        }
+
+        var radius = MathF.Max(MinLearnedRadius, casterDistanceAtStart + LearnMargin);
+        if (this.learned.TryGetValue(actionId, out var existing) && existing.Size >= radius)
+        {
+            return; // already covers this distance
+        }
+
+        this.learned[actionId] = new GeometryOverride(DangerKind.Circle, radius);
+        this.log.Information(
+            "[BeastHelper] Crucible: learned {Id} is a point-blank burst (~{Radius:0}y) — took {Pct:P0} damage, untargeted, {Dist:0.0}y away.",
+            actionId,
+            radius,
+            hpLossFraction,
+            casterDistanceAtStart);
+        this.SaveLearned();
+    }
+
+    private void LoadLearned()
+    {
+        try
+        {
+            var path = this.LearnedPath();
+            if (!File.Exists(path))
+            {
+                return;
+            }
+
+            var entries = JsonSerializer.Deserialize<List<LearnedEntry>>(File.ReadAllText(path)) ?? [];
+            foreach (var e in entries.Where(e => e.ActionId != 0 && e.Size > 0))
+            {
+                this.learned[e.ActionId] = new GeometryOverride(e.Kind, e.Size);
+            }
+
+            if (this.learned.Count > 0)
+            {
+                this.log.Information("[BeastHelper] Loaded {Count} learned Crucible danger shapes.", this.learned.Count);
+            }
+        }
+        catch (Exception ex)
+        {
+            this.log.Error(ex, "[BeastHelper] Failed to load {File}.", LearnedFileName);
+        }
+    }
+
+    private void SaveLearned()
+    {
+        try
+        {
+            Directory.CreateDirectory(this.pluginInterface.ConfigDirectory.FullName);
+            var entries = this.learned.Select(kv => new LearnedEntry(kv.Key, kv.Value.Kind, kv.Value.Size)).ToList();
+            File.WriteAllText(this.LearnedPath(), JsonSerializer.Serialize(entries, this.learnedJson));
+        }
+        catch (Exception ex)
+        {
+            this.log.Error(ex, "[BeastHelper] Failed to save {File}.", LearnedFileName);
+        }
+    }
+
+    private string LearnedPath() => Path.Combine(this.pluginInterface.ConfigDirectory.FullName, LearnedFileName);
+
+    private readonly record struct LearnedEntry(uint ActionId, DangerKind Kind, float Size);
 
     /// <summary>
     /// Falls back to the game's <c>Action</c> sheet to describe an unknown cast

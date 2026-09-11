@@ -22,6 +22,7 @@ public sealed class CrucibleCastLog
 
     private readonly IDalamudPluginInterface pluginInterface;
     private readonly IDataManager dataManager;
+    private readonly CrucibleEncounterDatabase database;
     private readonly IPluginLog log;
 
     private readonly JsonSerializerOptions jsonOptions = new()
@@ -43,10 +44,15 @@ public sealed class CrucibleCastLog
     private bool dirty;
     private DateTime lastFlush = DateTime.MinValue;
 
-    public CrucibleCastLog(IDalamudPluginInterface pluginInterface, IDataManager dataManager, IPluginLog log)
+    public CrucibleCastLog(
+        IDalamudPluginInterface pluginInterface,
+        IDataManager dataManager,
+        CrucibleEncounterDatabase database,
+        IPluginLog log)
     {
         this.pluginInterface = pluginInterface;
         this.dataManager = dataManager;
+        this.database = database;
         this.log = log;
         this.Load();
     }
@@ -93,6 +99,8 @@ public sealed class CrucibleCastLog
                 enemy.Name,
                 state.PlayerCurrentHp,
                 state.PlayerMaxHp,
+                enemy.CastTargetsPlayer,
+                enemy.Distance,
                 DateTime.UtcNow);
         }
 
@@ -288,6 +296,8 @@ public sealed class CrucibleCastLog
             var lostPct = p.MaxHp == 0 ? 0f : (float)lost / p.MaxHp;
             var hit = lostPct >= 0.02f;
 
+            this.database.ObserveResolution(p.ActionId, p.CastTargetsPlayer, p.CasterDistance, hit, lostPct);
+
             var res = new ResolutionRecord
             {
                 T = DateTime.UtcNow.ToString("o"),
@@ -308,7 +318,14 @@ public sealed class CrucibleCastLog
 
     private sealed record CastFile(string Comment, List<CastRecord> Casts);
 
-    private readonly record struct PendingCast(uint ActionId, string EnemyName, uint StartHp, uint MaxHp, DateTime StartedAt);
+    private readonly record struct PendingCast(
+        uint ActionId,
+        string EnemyName,
+        uint StartHp,
+        uint MaxHp,
+        bool CastTargetsPlayer,
+        float CasterDistance,
+        DateTime StartedAt);
 
     private sealed record ResolutionRecord
     {

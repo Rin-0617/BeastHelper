@@ -88,7 +88,7 @@ public sealed class Plugin : IDalamudPlugin
 
         // Crucible (闘獣練) assist: read-only state → rule-based advice → overlay.
         // Nothing in this chain acts on the game or drives movement.
-        var crucibleEncounters = new CrucibleEncounterDatabase(this.beastData, dataManager, log);
+        var crucibleEncounters = new CrucibleEncounterDatabase(this.beastData, dataManager, pluginInterface, log);
         this.crucibleReader = new CrucibleStateReader(
             this.clientState, this.condition, this.objectTable, targetManager, dataManager, this.beastData, log);
         this.crucibleEngine = new CrucibleDecisionEngine(
@@ -97,7 +97,7 @@ public sealed class Plugin : IDalamudPlugin
         this.crucibleDodgeSolver = new CrucibleDodgeSolver(crucibleEncounters);
         this.crucibleActuator = new CrucibleActuator(this.configuration, this.navmesh, this.condition, log);
         this.crucibleActionRecorder = new CrucibleActionRecorder(pluginInterface, gameInterop, dataManager, this.crucibleReader, log);
-        this.crucibleCastLog = new CrucibleCastLog(pluginInterface, dataManager, log);
+        this.crucibleCastLog = new CrucibleCastLog(pluginInterface, dataManager, crucibleEncounters, log);
         this.crucibleOverlay = new CrucibleOverlay(
             this.configuration, this.crucibleReader, this.crucibleEngine, this.crucibleActuator);
         this.crucibleZoneOverlay = new CrucibleZoneOverlay(this.configuration, this.crucibleReader, this.crucibleDodgeSolver, this.gameGui);
