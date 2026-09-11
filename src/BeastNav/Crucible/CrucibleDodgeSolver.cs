@@ -27,10 +27,12 @@ public sealed class CrucibleDodgeSolver
     private const float RaidwideRadius = 25f;
 
     private readonly CrucibleEncounterDatabase database;
+    private readonly CrucibleTimeline? timeline;
 
-    public CrucibleDodgeSolver(CrucibleEncounterDatabase database)
+    public CrucibleDodgeSolver(CrucibleEncounterDatabase database, CrucibleTimeline? timeline = null)
     {
         this.database = database;
+        this.timeline = timeline;
     }
 
     public IReadOnlyList<DangerShape> LastShapes { get; private set; } = [];
@@ -54,9 +56,24 @@ public sealed class CrucibleDodgeSolver
         var shapes = new List<DangerShape>();
         foreach (var enemy in state.Enemies)
         {
-            if (this.BuildShape(enemy) is { } shape)
+            if (this.BuildShape(enemy.Position, enemy.Rotation, enemy.CastActionId, enemy.CastRemaining, enemy.Name) is { } shape)
             {
                 shapes.Add(shape);
+            }
+        }
+
+        // Casts the timeline expects soon, from enemies not casting yet — lets
+        // the solver route around a known mechanic before its cast bar even
+        // appears. These are stationary "piece" enemies, so the current
+        // position/facing is a good stand-in for where the cast will land.
+        if (this.timeline is not null)
+        {
+            foreach (var predicted in this.timeline.Predict(state))
+            {
+                if (this.BuildShape(predicted.Enemy.Position, predicted.Enemy.Rotation, predicted.ActionId, predicted.SecondsUntilCast, predicted.Enemy.Name) is { } shape)
+                {
+                    shapes.Add(shape);
+                }
             }
         }
 
@@ -135,19 +152,25 @@ public sealed class CrucibleDodgeSolver
         };
     }
 
-    private DangerShape? BuildShape(CrucibleEnemy enemy)
+    /// <summary>
+    /// Builds a danger shape for one cast, live or predicted. Takes raw values
+    /// rather than a <see cref="CrucibleEnemy"/> so a timeline prediction (whose
+    /// caster isn't casting yet) can go through the same geometry logic as a
+    /// live cast.
+    /// </summary>
+    private DangerShape? BuildShape(Vector3 position, float rotation, uint actionId, float secondsLeft, string name)
     {
-        if (!enemy.IsCasting || enemy.CastActionId == 0)
+        if (actionId == 0)
         {
             return null;
         }
 
-        var origin = Flat(enemy.Position);
-        var forward = new Vector2(MathF.Sin(enemy.Rotation), MathF.Cos(enemy.Rotation));
+        var origin = Flat(position);
+        var forward = new Vector2(MathF.Sin(rotation), MathF.Cos(rotation));
 
         // A curated correction wins over the sheet: some casts (usually a
         // point-blank burst) are filed as single-target but actually hit an area.
-        if (this.database.TryGetGeometryOverride(enemy.CastActionId) is { } o)
+        if (this.database.TryGetGeometryOverride(actionId) is { } o)
         {
             return o.Kind switch
             {
@@ -156,8 +179,8 @@ public sealed class CrucibleDodgeSolver
                     Kind = DangerKind.Circle,
                     Origin = origin,
                     Radius = o.Size + Margin,
-                    SecondsLeft = enemy.CastRemaining,
-                    Name = enemy.Name,
+                    SecondsLeft = secondsLeft,
+                    Name = name,
                 },
                 DangerKind.Line => new DangerShape
                 {
@@ -166,8 +189,8 @@ public sealed class CrucibleDodgeSolver
                     Forward = forward,
                     Radius = o.Size,
                     HalfWidth = DefaultLineHalfWidth + Margin,
-                    SecondsLeft = enemy.CastRemaining,
-                    Name = enemy.Name,
+                    SecondsLeft = secondsLeft,
+                    Name = name,
                 },
                 DangerKind.Cone => new DangerShape
                 {
@@ -176,14 +199,14 @@ public sealed class CrucibleDodgeSolver
                     Forward = forward,
                     Radius = o.Size + Margin,
                     HalfAngle = DefaultConeHalfAngle,
-                    SecondsLeft = enemy.CastRemaining,
-                    Name = enemy.Name,
+                    SecondsLeft = secondsLeft,
+                    Name = name,
                 },
                 _ => null,
             };
         }
 
-        var g = this.database.ReadGeometry(enemy.CastActionId);
+        var g = this.database.ReadGeometry(actionId);
 
         return g.CastType switch
         {
@@ -192,8 +215,8 @@ public sealed class CrucibleDodgeSolver
                 Kind = DangerKind.Circle,
                 Origin = origin,
                 Radius = MathF.Max(3f, g.Size) + Margin,
-                SecondsLeft = enemy.CastRemaining,
-                Name = enemy.Name,
+                SecondsLeft = secondsLeft,
+                Name = name,
             },
             4 or 12 => new DangerShape
             {
@@ -202,8 +225,8 @@ public sealed class CrucibleDodgeSolver
                 Forward = forward,
                 Radius = MathF.Max(10f, g.Size),
                 HalfWidth = (g.HalfWidth > 0 ? g.HalfWidth : DefaultLineHalfWidth) + Margin,
-                SecondsLeft = enemy.CastRemaining,
-                Name = enemy.Name,
+                SecondsLeft = secondsLeft,
+                Name = name,
             },
             3 or 11 or 13 => new DangerShape
             {
@@ -212,8 +235,8 @@ public sealed class CrucibleDodgeSolver
                 Forward = forward,
                 Radius = MathF.Max(5f, g.Size) + Margin,
                 HalfAngle = DefaultConeHalfAngle,
-                SecondsLeft = enemy.CastRemaining,
-                Name = enemy.Name,
+                SecondsLeft = secondsLeft,
+                Name = name,
             },
             10 => new DangerShape
             {
@@ -221,8 +244,8 @@ public sealed class CrucibleDodgeSolver
                 Origin = origin,
                 Radius = MathF.Max(8f, g.Size) + Margin,
                 InnerRadius = MathF.Max(0f, DefaultDonutInnerRadius - Margin),
-                SecondsLeft = enemy.CastRemaining,
-                Name = enemy.Name,
+                SecondsLeft = secondsLeft,
+                Name = name,
             },
             _ => null,
         };

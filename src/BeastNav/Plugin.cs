@@ -34,6 +34,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly BeastTamingStateService tamingState;
     private readonly CrucibleStateReader crucibleReader;
     private readonly CrucibleDecisionEngine crucibleEngine;
+    private readonly CrucibleTimeline crucibleTimeline;
     private readonly CrucibleDodgeSolver crucibleDodgeSolver;
     private readonly CrucibleActuator crucibleActuator;
     private readonly CrucibleActionRecorder crucibleActionRecorder;
@@ -94,7 +95,8 @@ public sealed class Plugin : IDalamudPlugin
         this.crucibleEngine = new CrucibleDecisionEngine(
             new CrucibleMechanicDetector(crucibleEncounters),
             new CrucibleBeastSelector(this.beastData, crucibleEncounters));
-        this.crucibleDodgeSolver = new CrucibleDodgeSolver(crucibleEncounters);
+        this.crucibleTimeline = new CrucibleTimeline(pluginInterface, log);
+        this.crucibleDodgeSolver = new CrucibleDodgeSolver(crucibleEncounters, this.crucibleTimeline);
         this.crucibleActuator = new CrucibleActuator(this.configuration, this.navmesh, this.condition, log);
         this.crucibleActionRecorder = new CrucibleActionRecorder(pluginInterface, gameInterop, dataManager, this.crucibleReader, log);
         this.crucibleCastLog = new CrucibleCastLog(pluginInterface, dataManager, crucibleEncounters, log);
@@ -227,6 +229,7 @@ public sealed class Plugin : IDalamudPlugin
                 this.chat.Print($"[BeastHelper] {this.crucibleCastLog.RecordCount} observed casts → {this.crucibleCastLog.FilePath}");
                 this.chat.Print($"[BeastHelper] geometry log → {this.crucibleCastLog.ObservationsPath}");
                 this.chat.Print($"[BeastHelper] {this.crucibleActionRecorder.Count} of your own actions → {this.crucibleActionRecorder.FilePath}");
+                this.chat.Print($"[BeastHelper] timeline learned for {this.crucibleTimeline.LearnedEnemyCount} enemy type(s).");
                 break;
             case "force":
                 this.crucibleReader.ForceActive = !this.crucibleReader.ForceActive;
@@ -313,6 +316,7 @@ public sealed class Plugin : IDalamudPlugin
         this.crucibleReader.Update();
         var crucibleState = this.crucibleReader.Current;
         this.crucibleCastLog.Observe(crucibleState);
+        this.crucibleTimeline.Observe(crucibleState);
         var dodgePlan = this.crucibleDodgeSolver.Solve(crucibleState);
         this.crucibleActuator.Tick(crucibleState, dodgePlan);
         this.crucibleOverlay.IsOpen = this.crucibleOverlay.ShouldBeOpen;
