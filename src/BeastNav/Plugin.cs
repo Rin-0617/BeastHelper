@@ -95,7 +95,7 @@ public sealed class Plugin : IDalamudPlugin
         this.crucibleEngine = new CrucibleDecisionEngine(
             new CrucibleMechanicDetector(crucibleEncounters),
             new CrucibleBeastSelector(this.beastData, crucibleEncounters));
-        this.crucibleTimeline = new CrucibleTimeline(pluginInterface, log);
+        this.crucibleTimeline = new CrucibleTimeline(pluginInterface, crucibleEncounters, log);
         this.crucibleDodgeSolver = new CrucibleDodgeSolver(crucibleEncounters, this.crucibleTimeline);
         this.crucibleActuator = new CrucibleActuator(this.configuration, this.navmesh, this.condition, log);
         this.crucibleActionRecorder = new CrucibleActionRecorder(pluginInterface, gameInterop, dataManager, this.crucibleReader, log);

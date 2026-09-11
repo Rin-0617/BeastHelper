@@ -125,7 +125,8 @@ public sealed class CrucibleEncounterDatabase
 
         this.learned[actionId] = new GeometryOverride(DangerKind.Circle, radius);
         this.log.Information(
-            "[BeastHelper] Crucible: learned {Id} is a point-blank burst (~{Radius:0}y) — took {Pct:P0} damage, untargeted, {Dist:0.0}y away.",
+            "[BeastHelper] Crucible: learned {Action} (id {Id}) is a point-blank burst (~{Radius:0}y) — took {Pct:P0} damage, untargeted, {Dist:0.0}y away.",
+            this.ResolveActionName(actionId),
             actionId,
             radius,
             hpLossFraction,

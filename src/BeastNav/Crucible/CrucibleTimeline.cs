@@ -28,6 +28,7 @@ public sealed class CrucibleTimeline
     private const float MergeToleranceSeconds = 1f;
 
     private readonly IDalamudPluginInterface pluginInterface;
+    private readonly CrucibleEncounterDatabase database;
     private readonly IPluginLog log;
     private readonly JsonSerializerOptions json = new() { WriteIndented = true };
 
@@ -38,9 +39,10 @@ public sealed class CrucibleTimeline
 
     private bool dirty;
 
-    public CrucibleTimeline(IDalamudPluginInterface pluginInterface, IPluginLog log)
+    public CrucibleTimeline(IDalamudPluginInterface pluginInterface, CrucibleEncounterDatabase database, IPluginLog log)
     {
         this.pluginInterface = pluginInterface;
+        this.database = database;
         this.log = log;
         this.Load();
     }
@@ -82,7 +84,7 @@ public sealed class CrucibleTimeline
 
             this.MarkFired(enemy.GameObjectId, enemy.CastActionId);
             var elapsed = (float)(now - this.firstSeen[enemy.GameObjectId]).TotalSeconds;
-            this.Learn(enemy.NameId, elapsed, enemy.CastActionId);
+            this.Learn(enemy.NameId, enemy.Name, elapsed, enemy.CastActionId);
         }
 
         this.castsInProgress.RemoveWhere(key =>
@@ -158,7 +160,7 @@ public sealed class CrucibleTimeline
         set.Add(actionId);
     }
 
-    private void Learn(uint enemyNameId, float elapsed, uint actionId)
+    private void Learn(uint enemyNameId, string enemyName, float elapsed, uint actionId)
     {
         if (!this.script.TryGetValue(enemyNameId, out var entries))
         {
@@ -176,7 +178,12 @@ public sealed class CrucibleTimeline
 
         entries.Add(new ScriptEntry(elapsed, actionId));
         this.dirty = true;
-        this.log.Debug("[BeastHelper] Crucible timeline: enemy {Enemy} → action {Action} at +{Elapsed:0.0}s.", enemyNameId, actionId, elapsed);
+        this.log.Information(
+            "[BeastHelper] Crucible timeline: learned {Enemy} → {Action} (id {Id}) at +{Elapsed:0.0}s.",
+            enemyName,
+            this.database.ResolveActionName(actionId),
+            actionId,
+            elapsed);
     }
 
     private void Load()
