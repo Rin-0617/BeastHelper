@@ -9,10 +9,18 @@ namespace BeastNav.Crucible;
 /// </summary>
 public sealed class CrucibleDodgeSolver
 {
-    // How far out to look for safety, and how finely.
-    private const float MaxSearch = 22f;
+    // How far out to look for safety, and how finely. Kept modest on purpose:
+    // a "clear" spot far from the pack is often past the arena's real edge,
+    // which this solver has no notion of — better to stand pat (NoSafeSpot)
+    // than to walk toward a wall chasing a technically-open ring.
+    private const float MaxSearch = 15f;
     private const float RingStep = 1.5f;
     private const int Spokes = 24;
+
+    // How strongly a candidate is penalised for straying from the pack's
+    // centre — the arena centre is reliably near the enemies, not near the
+    // player's current (possibly already-off-centre) position.
+    private const float CentroidWeight = 0.6f;
 
     // Padding added to every shape so we aim for clearly-safe ground.
     private const float Margin = 1.5f;
@@ -102,6 +110,8 @@ public sealed class CrucibleDodgeSolver
             return new DodgePlan { ThreatCount = shapes.Count, SecondsLeft = soonest };
         }
 
+        var centroid = PackCentroid(state) ?? player;
+
         // Search rings outward for the closest point clear of every shape.
         for (var r = RingStep; r <= MaxSearch; r += RingStep)
         {
@@ -117,9 +127,10 @@ public sealed class CrucibleDodgeSolver
                     continue;
                 }
 
-                // Prefer the candidate that also keeps us near the pack (so we
-                // don't sprint to a far wall for a small sidestep).
-                var score = r + (0.15f * DistanceToNearestEnemy(candidate, state));
+                // Prefer the candidate that also stays close to the pack's
+                // centre, so a marginally-bigger gap far out doesn't win over a
+                // tighter one that keeps us in the actual arena.
+                var score = r + (CentroidWeight * Vector2.Distance(candidate, centroid));
                 if (score < bestScore)
                 {
                     bestScore = score;
@@ -251,15 +262,21 @@ public sealed class CrucibleDodgeSolver
         };
     }
 
-    private static float DistanceToNearestEnemy(Vector2 p, CrucibleState state)
+    private static Vector2? PackCentroid(CrucibleState state)
     {
-        var min = float.MaxValue;
-        foreach (var enemy in state.Enemies)
+        var alive = state.Enemies.Where(static e => e.CurrentHp > 0).ToList();
+        if (alive.Count == 0)
         {
-            min = MathF.Min(min, Vector2.Distance(p, Flat(enemy.Position)));
+            return null;
         }
 
-        return min == float.MaxValue ? 0f : min;
+        var sum = Vector2.Zero;
+        foreach (var enemy in alive)
+        {
+            sum += Flat(enemy.Position);
+        }
+
+        return sum / alive.Count;
     }
 
     private static Vector2 Flat(Vector3 v) => new(v.X, v.Z);
