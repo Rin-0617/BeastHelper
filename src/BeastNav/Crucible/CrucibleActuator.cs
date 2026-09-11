@@ -6,10 +6,11 @@ using Dalamud.Plugin.Services;
 namespace BeastNav.Crucible;
 
 /// <summary>
-/// The movement brain for the Crucible autopilot. Every tick it picks one goal
-/// in priority order — dodge a cast, close on the combat target, or advance
-/// along the recorded route — and walks the character there via vnavmesh's path
-/// follower. Nothing else in BeastHelper moves the character while this runs.
+/// The movement brain for the Crucible assist. Every tick it picks one goal in
+/// priority order — dodge a cast, or (optionally) advance along the recorded
+/// route between packs — and walks the character there via vnavmesh's path
+/// follower. Combat itself is left to the player; this never targets or acts,
+/// only moves.
 /// </summary>
 /// <remarks>
 /// In-combat / route movement automation, against the FFXIV ToS. Gated behind
@@ -20,7 +21,6 @@ namespace BeastNav.Crucible;
 public sealed class CrucibleActuator
 {
     private const float DodgeArrive = 1.5f;
-    private const float MeleeRange = 3.5f;
     private const float WaypointArrive = 3f;
     private const float EngageRange = 20f;
     private static readonly TimeSpan Reissue = TimeSpan.FromMilliseconds(350);
@@ -61,7 +61,7 @@ public sealed class CrucibleActuator
 
     public int RouteIndex => this.waypointIndex;
 
-    public void Tick(CrucibleState state, DodgePlan plan, CombatIntent combat)
+    public void Tick(CrucibleState state, DodgePlan plan)
     {
         var anyAuto = this.configuration.CrucibleAutoDodge || this.configuration.CrucibleAutoRoute;
 
@@ -88,7 +88,7 @@ public sealed class CrucibleActuator
 
         var now = DateTime.UtcNow;
 
-        // 1 — dodge.
+        // 1 — dodge. Wins over everything, including standing still to fight.
         if (this.configuration.CrucibleAutoDodge && plan.ShouldMove && !plan.NoSafeSpot)
         {
             this.Drive(MoveGoal.Dodge, plan.TargetXZ, now);
@@ -107,22 +107,15 @@ public sealed class CrucibleActuator
             this.Halt(arrived ? "dodge arrived" : "dodge clear");
         }
 
-        // 2 — close on the combat target.
-        if (combat.HasTarget && !combat.InActionRange && combat.TargetDistance > MeleeRange)
-        {
-            this.Drive(MoveGoal.Approach, combat.TargetPosition, now);
-            return;
-        }
-
-        // Standing and fighting — hold position.
-        if (combat.HasTarget || this.NearbyEnemy(state))
+        // Combat is manual — don't drag the player around mid-fight.
+        if (state.InCombat || this.NearbyEnemy(state))
         {
             this.Halt("in combat");
             return;
         }
 
-        // 3 — follow the route to the next pack.
-        if (this.configuration.CrucibleAutoRoute && !state.InCombat)
+        // 2 — follow the route to the next pack.
+        if (this.configuration.CrucibleAutoRoute)
         {
             this.FollowRoute(state, now);
             return;
@@ -179,7 +172,6 @@ public sealed class CrucibleActuator
         this.Status = newGoal switch
         {
             MoveGoal.Dodge => "dodging",
-            MoveGoal.Approach => "closing on target",
             MoveGoal.Route => $"route wp {this.waypointIndex + 1}",
             _ => this.Status,
         };
@@ -203,6 +195,5 @@ public enum MoveGoal
 {
     None,
     Dodge,
-    Approach,
     Route,
 }

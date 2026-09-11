@@ -27,18 +27,9 @@ public sealed class Configuration : IPluginConfiguration
     // in-combat movement automation (against the FFXIV ToS); off by default.
     public bool CrucibleAutoDodge { get; set; }
 
-    // EXPERIMENTAL. Target the nearest enemy and use action bar 1 automatically.
-    // Combat automation (against the FFXIV ToS); off by default.
-    public bool CrucibleAutoCombat { get; set; }
-
     // EXPERIMENTAL. Walk the recorded route between packs. Needs a route recorded
     // for the stage first (/beasthelper crucible record). Off by default.
     public bool CrucibleAutoRoute { get; set; }
-
-    // Hand the rotation to WrathCombo instead of the built-in action-bar scan.
-    // Off by default — WrathCombo has no Beastmaster rotation, so the scan is
-    // the sensible default for the Crucible.
-    public bool CrucibleUseWrathCombo { get; set; }
 
     // --- Manual "I don't need this pet" list (user controlled) ---------------
     // Toggled from the pet list. Never written by the bestiary sync.

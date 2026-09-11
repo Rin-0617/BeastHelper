@@ -37,7 +37,6 @@ public sealed class Plugin : IDalamudPlugin
     private readonly CrucibleDodgeSolver crucibleDodgeSolver;
     private readonly CrucibleRoute crucibleRoute;
     private readonly CrucibleActuator crucibleActuator;
-    private readonly CrucibleCombatAssist crucibleCombat;
     private readonly CrucibleActionRecorder crucibleActionRecorder;
     private readonly CrucibleCastLog crucibleCastLog;
     private readonly CrucibleOverlay crucibleOverlay;
@@ -99,12 +98,10 @@ public sealed class Plugin : IDalamudPlugin
         this.crucibleDodgeSolver = new CrucibleDodgeSolver(crucibleEncounters);
         this.crucibleRoute = new CrucibleRoute(pluginInterface, log);
         this.crucibleActuator = new CrucibleActuator(this.configuration, this.navmesh, this.crucibleRoute, this.condition, log);
-        this.crucibleCombat = new CrucibleCombatAssist(
-            this.configuration, this.objectTable, targetManager, this.condition, new WrathComboBridge(pluginInterface, log), log);
         this.crucibleActionRecorder = new CrucibleActionRecorder(pluginInterface, gameInterop, dataManager, this.crucibleReader, log);
         this.crucibleCastLog = new CrucibleCastLog(pluginInterface, dataManager, log);
         this.crucibleOverlay = new CrucibleOverlay(
-            this.configuration, this.crucibleReader, this.crucibleEngine, this.crucibleActuator, this.crucibleCombat);
+            this.configuration, this.crucibleReader, this.crucibleEngine, this.crucibleActuator);
         this.crucibleZoneOverlay = new CrucibleZoneOverlay(this.configuration, this.crucibleReader, this.crucibleDodgeSolver, this.gameGui);
 
         this.clientState.TerritoryChanged += this.OnTerritoryChanged;
@@ -156,7 +153,6 @@ public sealed class Plugin : IDalamudPlugin
         this.pluginInterface.UiBuilder.OpenConfigUi -= this.ToggleMainWindow;
         this.pluginInterface.UiBuilder.OpenMainUi -= this.ToggleMainWindow;
         this.windowSystem.RemoveAllWindows();
-        this.crucibleCombat.Release();
         this.crucibleActionRecorder.Dispose();
         this.crucibleCastLog.Flush();
         this.SaveConfiguration();
@@ -335,8 +331,7 @@ public sealed class Plugin : IDalamudPlugin
             this.crucibleRoute.Sample(crucibleState.PlayerPosition);
         }
 
-        var combatIntent = this.crucibleCombat.Tick(crucibleState, this.crucibleActuator.IsDodging);
-        this.crucibleActuator.Tick(crucibleState, dodgePlan, combatIntent);
+        this.crucibleActuator.Tick(crucibleState, dodgePlan);
         this.crucibleOverlay.IsOpen = this.crucibleOverlay.ShouldBeOpen;
         this.TryAutoSyncBeastNote();
     }
