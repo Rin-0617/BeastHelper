@@ -22,9 +22,9 @@ https://github.com/Rin-0617/BeastHelper/releases
 
 Current release:
 
-- Version: `0.1.2.0`
-- Tag: `v0.1.2`
-- Artifact: `BeastHelper-v0.1.2.zip`
+- Version: `0.1.3.0`
+- Tag: `v0.1.3`
+- Artifact: `BeastHelper-v0.1.3.zip`
 - Author: `Rin`
 - Repository owner: `Rin-0617`
 
@@ -37,7 +37,7 @@ What is implemented:
 - Reads user-provided enemy destinations from `beast-destinations.json`.
 - Includes built-in Beastmaster map coordinates for the field entries.
 - Stores target enemy names and enemy level ranges for built-in entries.
-- Mirrors the in-game monster note ("魔物図鑑") capture state into `Configuration.TamedPetRowIds`, kept separate from the user's manual "not needed" list (`MarkedPetRowIds`). While `XBMMonsterNotebook` is open, each grid cell is an 8-value `AtkValue` group anchored by a `String` "No.&lt;n&gt;"; the value just before the anchor is the portrait icon id. Captured entries have a unique portrait, uncaptured entries all share one "locked" placeholder icon (`242051`). The grid only feeds the current page (25 rows), so `/beasthelper sync` folds each page into the list and self-validates the running total against the "&lt;captured&gt;/&lt;total&gt;" string once every page has been seen.
+- Mirrors the in-game monster note ("魔物図鑑") capture state into `Configuration.TamedPetRowIds`, kept separate from the user's manual "not needed" list (`MarkedPetRowIds`). The primary source is `XBMManager.IsPetUnlocked`, read directly from game memory — no need to have `XBMMonsterNotebook` open, and auto-sync runs in the background every 5 s by default. The old addon-scrape (reading `XBMMonsterNotebook`'s `AtkValue` grid while it's open) is kept as a fallback: each grid cell is an 8-value `AtkValue` group anchored by a `String` "No.&lt;n&gt;"; the value just before the anchor is the portrait icon id, captured entries have a unique portrait, and uncaptured entries all share one "locked" placeholder icon (`242051`). The grid only feeds the current page (25 rows), so `/beasthelper sync` folds each page into the list and self-validates the running total against the "&lt;captured&gt;/&lt;total&gt;" string once every page has been seen.
 - Sends movement requests through vnavmesh IPC and calls Mount Roulette (general action 9) after teleporting to a destination in another zone.
 
 What still needs game-side confirmation:
@@ -50,11 +50,12 @@ Commands:
 
 - `/beasthelper` opens the main window (always starts closed on login).
 - `/beasthelper sync` folds the monster-note page(s) currently shown into `TamedPetRowIds`.
-- `/beasthelper autosync` toggles periodic (every 5 s) automatic 図鑑 sync while logged in.
+- `/beasthelper autosync` toggles periodic (every 5 s) automatic 図鑑 sync while logged in. On by default.
 - `/beasthelper dumpnote` logs the monster-note addons' `AtkValue` arrays and node trees to `/xllog`.
 - `/beasthelper debug` opens the 図鑑 sync diagnostics window.
 - `/beasthelper reload` reloads Lumina rows and destination JSON.
 - `/beasthelper stop` stops the current vnavmesh path.
+- `/beasthelper resetnote` clears `TamedPetRowIds` so the next auto-sync re-derives it from `XBMManager` from scratch.
 
 Destination file:
 
