@@ -34,7 +34,6 @@ public sealed class NavmeshService
     private readonly ICallGateSubscriber<bool> pathRunning;
     private readonly ICallGateSubscriber<int> pathWaypoints;
     private readonly ICallGateSubscriber<object?> pathStop;
-    private readonly ICallGateSubscriber<List<Vector3>, bool, object?> pathMoveTo;
 
     private Request? active;
 
@@ -51,42 +50,9 @@ public sealed class NavmeshService
         this.pathRunning = pluginInterface.GetIpcSubscriber<bool>("vnavmesh.Path.IsRunning");
         this.pathWaypoints = pluginInterface.GetIpcSubscriber<int>("vnavmesh.Path.NumWaypoints");
         this.pathStop = pluginInterface.GetIpcSubscriber<object?>("vnavmesh.Path.Stop");
-        this.pathMoveTo = pluginInterface.GetIpcSubscriber<List<Vector3>, bool, object?>("vnavmesh.Path.MoveTo");
     }
 
     public bool IsReady() => Safe(this.navReady, false);
-
-    /// <summary>True while a BeastHelper travel move is in progress.</summary>
-    public bool HasActiveRequest => this.active is not null;
-
-    /// <summary>
-    /// Walk straight to a single point, no pathfinding — for short reactive
-    /// moves like a dodge. Does not touch the travel <see cref="Request"/> state.
-    /// </summary>
-    public void WalkDirectlyTo(Vector3 point)
-    {
-        try
-        {
-            this.pathMoveTo.InvokeAction([point], false);
-        }
-        catch (Exception ex)
-        {
-            this.log.Debug(ex, "[BeastHelper] vnavmesh Path.MoveTo failed.");
-        }
-    }
-
-    /// <summary>Stop vnavmesh following whatever path it is on.</summary>
-    public void StopPath()
-    {
-        try
-        {
-            this.pathStop.InvokeAction();
-        }
-        catch (Exception ex)
-        {
-            this.log.Debug(ex, "[BeastHelper] vnavmesh Path.Stop failed.");
-        }
-    }
 
     /// <summary>Queue a navigation request, replacing any previous one.</summary>
     public bool MoveCloseTo(Vector3 destination, bool fly, float range)

@@ -1,4 +1,3 @@
-using BeastNav.Crucible;
 using BeastNav.Services;
 using BeastNav.Windows;
 using BeastNav.Models;
@@ -32,15 +31,6 @@ public sealed class Plugin : IDalamudPlugin
     private readonly TeleportService teleport;
     private readonly MountService mount;
     private readonly BeastTamingStateService tamingState;
-    private readonly CrucibleStateReader crucibleReader;
-    private readonly CrucibleDecisionEngine crucibleEngine;
-    private readonly CrucibleTimeline crucibleTimeline;
-    private readonly CrucibleDodgeSolver crucibleDodgeSolver;
-    private readonly CrucibleActuator crucibleActuator;
-    private readonly CrucibleActionRecorder crucibleActionRecorder;
-    private readonly CrucibleCastLog crucibleCastLog;
-    private readonly CrucibleOverlay crucibleOverlay;
-    private readonly CrucibleZoneOverlay crucibleZoneOverlay;
     private readonly MainWindow mainWindow;
     private readonly DebugWindow debugWindow;
     private BeastDestination? pendingDestination;
@@ -57,12 +47,10 @@ public sealed class Plugin : IDalamudPlugin
         IClientState clientState,
         ICondition condition,
         IObjectTable objectTable,
-        ITargetManager targetManager,
         IGameGui gameGui,
         IDataManager dataManager,
         IAetheryteList aetherytes,
         IFramework framework,
-        IGameInteropProvider gameInterop,
         IPluginLog log)
     {
         this.pluginInterface = pluginInterface;
@@ -87,23 +75,6 @@ public sealed class Plugin : IDalamudPlugin
         this.mount = new MountService(log);
         this.tamingState = new BeastTamingStateService(this.gameGui, this.beastData, this.configuration, log);
 
-        // Crucible (闘獣練) assist: read-only state → rule-based advice → overlay.
-        // Nothing in this chain acts on the game or drives movement.
-        var crucibleEncounters = new CrucibleEncounterDatabase(this.beastData, dataManager, pluginInterface, log);
-        this.crucibleReader = new CrucibleStateReader(
-            this.clientState, this.condition, this.objectTable, targetManager, dataManager, this.beastData, log);
-        this.crucibleEngine = new CrucibleDecisionEngine(
-            new CrucibleMechanicDetector(crucibleEncounters),
-            new CrucibleBeastSelector(this.beastData, crucibleEncounters));
-        this.crucibleTimeline = new CrucibleTimeline(pluginInterface, crucibleEncounters, log);
-        this.crucibleDodgeSolver = new CrucibleDodgeSolver(crucibleEncounters, this.crucibleTimeline);
-        this.crucibleActuator = new CrucibleActuator(this.configuration, this.navmesh, this.condition, log);
-        this.crucibleActionRecorder = new CrucibleActionRecorder(pluginInterface, gameInterop, dataManager, this.crucibleReader, log);
-        this.crucibleCastLog = new CrucibleCastLog(pluginInterface, dataManager, crucibleEncounters, log);
-        this.crucibleOverlay = new CrucibleOverlay(
-            this.configuration, this.crucibleReader, this.crucibleEngine, this.crucibleActuator);
-        this.crucibleZoneOverlay = new CrucibleZoneOverlay(this.configuration, this.crucibleReader, this.crucibleDodgeSolver, this.gameGui);
-
         this.clientState.TerritoryChanged += this.OnTerritoryChanged;
         framework.Update += this.OnFrameworkUpdate;
 
@@ -113,8 +84,6 @@ public sealed class Plugin : IDalamudPlugin
             this.destinations,
             this.navmesh,
             this.tamingState,
-            this.crucibleReader,
-            this.clientState,
             this.gameGui,
             this.TeleportToDestination,
             this.SaveConfiguration,
@@ -126,15 +95,13 @@ public sealed class Plugin : IDalamudPlugin
 
         this.windowSystem.AddWindow(this.mainWindow);
         this.windowSystem.AddWindow(this.debugWindow);
-        this.windowSystem.AddWindow(this.crucibleOverlay);
         this.pluginInterface.UiBuilder.Draw += this.windowSystem.Draw;
-        this.pluginInterface.UiBuilder.Draw += this.crucibleZoneOverlay.Draw;
         this.pluginInterface.UiBuilder.OpenConfigUi += this.ToggleMainWindow;
         this.pluginInterface.UiBuilder.OpenMainUi += this.ToggleMainWindow;
 
         this.commandManager.AddHandler(CommandName, new CommandInfo(this.OnCommand)
         {
-            HelpMessage = "Open BeastHelper. Subcommands: sync, autosync, dumpnote, debug, reload, stop, crucible.",
+            HelpMessage = "Open BeastHelper. Subcommands: sync, autosync, dumpnote, debug, reload, stop.",
         });
         this.commandManager.AddHandler(LegacyCommandName, new CommandInfo(this.OnCommand)
         {
@@ -149,12 +116,9 @@ public sealed class Plugin : IDalamudPlugin
         this.commandManager.RemoveHandler(CommandName);
         this.commandManager.RemoveHandler(LegacyCommandName);
         this.pluginInterface.UiBuilder.Draw -= this.windowSystem.Draw;
-        this.pluginInterface.UiBuilder.Draw -= this.crucibleZoneOverlay.Draw;
         this.pluginInterface.UiBuilder.OpenConfigUi -= this.ToggleMainWindow;
         this.pluginInterface.UiBuilder.OpenMainUi -= this.ToggleMainWindow;
         this.windowSystem.RemoveAllWindows();
-        this.crucibleActionRecorder.Dispose();
-        this.crucibleCastLog.Flush();
         this.SaveConfiguration();
     }
 
@@ -195,9 +159,6 @@ public sealed class Plugin : IDalamudPlugin
                 this.pendingDestination = null;
                 this.navmesh.Stop();
                 break;
-            case "crucible":
-                this.HandleCrucibleCommand(parts.Length > 1 ? parts[1].ToLowerInvariant() : string.Empty);
-                break;
             case "resetnote":
                 this.configuration.TamedPetRowIds = [];
                 this.nextAutoNoteSync = DateTime.MinValue;
@@ -205,40 +166,7 @@ public sealed class Plugin : IDalamudPlugin
                 this.chat.Print("[BeastHelper] Cleared the captured-monster list. Auto-sync will refill it from XBMManager.");
                 break;
             default:
-                this.chat.Print("[BeastHelper] Usage: /beasthelper [sync|autosync|dumpnote|debug|reload|stop|crucible|resetnote]");
-                break;
-        }
-    }
-
-    private void HandleCrucibleCommand(string sub)
-    {
-        switch (sub)
-        {
-            case "probe":
-                this.crucibleReader.LogUnlockProbe(this.configuration.TamedPetRowIds);
-                this.chat.Print("[BeastHelper] Crucible unlock probe written to the plugin log (/xllog).");
-                break;
-            case "pin":
-                this.configuration.CrucibleOverlayAlwaysShow = !this.configuration.CrucibleOverlayAlwaysShow;
-                this.SaveConfiguration();
-                this.chat.Print($"[BeastHelper] Crucible overlay always-show: {this.configuration.CrucibleOverlayAlwaysShow}");
-                break;
-            case "casts":
-                this.crucibleCastLog.Flush();
-                this.crucibleActionRecorder.Flush();
-                this.chat.Print($"[BeastHelper] {this.crucibleCastLog.RecordCount} observed casts → {this.crucibleCastLog.FilePath}");
-                this.chat.Print($"[BeastHelper] geometry log → {this.crucibleCastLog.ObservationsPath}");
-                this.chat.Print($"[BeastHelper] {this.crucibleActionRecorder.Count} of your own actions → {this.crucibleActionRecorder.FilePath}");
-                this.chat.Print($"[BeastHelper] timeline learned for {this.crucibleTimeline.LearnedEnemyCount} enemy type(s).");
-                break;
-            case "force":
-                this.crucibleReader.ForceActive = !this.crucibleReader.ForceActive;
-                this.chat.Print($"[BeastHelper] Crucible force-active: {this.crucibleReader.ForceActive} (for replay observation)");
-                break;
-            default:
-                this.configuration.CrucibleOverlayEnabled = !this.configuration.CrucibleOverlayEnabled;
-                this.SaveConfiguration();
-                this.chat.Print($"[BeastHelper] Crucible assist overlay: {this.configuration.CrucibleOverlayEnabled}");
+                this.chat.Print("[BeastHelper] Usage: /beasthelper [sync|autosync|dumpnote|debug|reload|stop|resetnote]");
                 break;
         }
     }
@@ -313,13 +241,6 @@ public sealed class Plugin : IDalamudPlugin
             this.navmesh.Update(player.Position);
         }
 
-        this.crucibleReader.Update();
-        var crucibleState = this.crucibleReader.Current;
-        this.crucibleCastLog.Observe(crucibleState);
-        this.crucibleTimeline.Observe(crucibleState);
-        var dodgePlan = this.crucibleDodgeSolver.Solve(crucibleState);
-        this.crucibleActuator.Tick(crucibleState, dodgePlan);
-        this.crucibleOverlay.IsOpen = this.crucibleOverlay.ShouldBeOpen;
         this.TryAutoSyncBeastNote();
     }
 

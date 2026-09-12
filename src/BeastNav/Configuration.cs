@@ -11,23 +11,6 @@ public sealed class Configuration : IPluginConfiguration
 
     public float StopDistance { get; set; } = 7.5f;
 
-    // --- Crucible (闘獣練) assist overlay -----------------------------------
-    // Read-only advisory overlay; never drives the character. Toggled with
-    // /beasthelper crucible.
-    public bool CrucibleOverlayEnabled { get; set; }
-
-    // Keep the overlay on screen even outside the Crucible, for tuning.
-    public bool CrucibleOverlayAlwaysShow { get; set; }
-
-    // Paint danger shapes and the computed dodge direction on the game screen.
-    // Dry-run only — it never moves the character. Off by default; it gets in
-    // the way once auto-dodge is doing the actual avoiding.
-    public bool CrucibleZonePaint { get; set; }
-
-    // EXPERIMENTAL. Automatically walk out of danger during casts. This is
-    // in-combat movement automation (against the FFXIV ToS); off by default.
-    public bool CrucibleAutoDodge { get; set; }
-
     // --- Manual "I don't need this pet" list (user controlled) ---------------
     // Toggled from the pet list. Never written by the bestiary sync.
     public List<uint> MarkedPetRowIds { get; set; } = [];
