@@ -2,7 +2,7 @@
   "Author": "Rin",
   "Name": "BeastHelper",
   "InternalName": "BeastHelper",
-  "AssemblyVersion": "0.1.2.0",
+  "AssemblyVersion": "0.1.3.0",
   "Punchline": "Navigate to known Beastmaster recruit enemies.",
   "Description": "Navigate to known Beastmaster recruit enemies from Beast Log data.",
   "ApplicableVersion": "any",
