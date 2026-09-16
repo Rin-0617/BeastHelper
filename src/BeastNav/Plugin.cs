@@ -31,6 +31,22 @@ public sealed class Plugin : IDalamudPlugin
     private readonly TeleportService teleport;
     private readonly MountService mount;
     private readonly BeastTamingStateService tamingState;
+    private readonly BossModDodgeService bossModDodge;
+    private readonly CrucibleBoardService crucibleBoard;
+    private readonly CrucibleReadyCheckService crucibleReadyCheck;
+    private readonly CrucibleCombatService crucibleCombat;
+    private readonly CrucibleRecoveryItemService crucibleRecoveryItem;
+    private readonly CrucibleLootService crucibleLoot;
+    private readonly CrucibleResultService crucibleResult;
+    private readonly CrucibleTreasureService crucibleTreasure;
+    private readonly CrucibleShopService crucibleShop;
+    private readonly CrucibleLoopService crucibleLoop;
+    private readonly CrucibleRouteService crucibleRoute;
+    private readonly QuestionableIpcService questionable;
+    private readonly CrucibleEntryService crucibleEntry;
+    private readonly LuaAutomationService luaAutomation;
+    private readonly LuaRecorderService luaRecorder;
+    private readonly NearbyObjectDumpService nearbyObjectDump;
     private readonly MainWindow mainWindow;
     private readonly DebugWindow debugWindow;
     private BeastDestination? pendingDestination;
@@ -47,10 +63,13 @@ public sealed class Plugin : IDalamudPlugin
         IClientState clientState,
         ICondition condition,
         IObjectTable objectTable,
+        ITargetManager targetManager,
         IGameGui gameGui,
         IDataManager dataManager,
         IAetheryteList aetherytes,
         IFramework framework,
+        IGameInteropProvider gameInterop,
+        ISigScanner sigScanner,
         IPluginLog log)
     {
         this.pluginInterface = pluginInterface;
@@ -68,12 +87,106 @@ public sealed class Plugin : IDalamudPlugin
         // (not replaced) on every load, so it grew by five entries per session.
         this.configuration.BeastNoteAddonCandidates =
             this.configuration.BeastNoteAddonCandidates.Distinct().ToList();
+
+        // A config saved before a board's script was confirmed (or while an
+        // in-progress design for it was still changing) keeps whatever was
+        // there at the time (a property's default initializer only applies
+        // to a brand new config, never backfills or upgrades an existing
+        // one) — so fill in or fix up known-good scripts here instead of
+        // only in the initializer. Confirmed board-select pattern via
+        // LuaRecorderService; the おすすめ編成 auto-apply step was tried and
+        // then deliberately dropped again (see CrucibleBoardScripts' notes),
+        // so a config still carrying that longer version is reverted here
+        // too, not just an empty one.
+        this.configuration.CrucibleBoardScripts.TryGetValue("第一盤", out var board1Script);
+        if (string.IsNullOrWhiteSpace(board1Script) || board1Script != "callback(\"XBMStageList\", 1, 1)")
+        {
+            this.configuration.CrucibleBoardScripts["第一盤"] = "callback(\"XBMStageList\", 1, 1)";
+        }
+
+        this.configuration.CrucibleBoardScripts.TryGetValue("第二盤", out var board2Script);
+        if (string.IsNullOrWhiteSpace(board2Script) || board2Script != "callback(\"XBMStageList\", 1, 2)")
+        {
+            this.configuration.CrucibleBoardScripts["第二盤"] = "callback(\"XBMStageList\", 1, 2)";
+        }
+
+        this.configuration.CrucibleBoardScripts.TryGetValue("第三盤", out var board3Script);
+        if (string.IsNullOrWhiteSpace(board3Script) || board3Script != "callback(\"XBMStageList\", 1, 3)")
+        {
+            this.configuration.CrucibleBoardScripts["第三盤"] = "callback(\"XBMStageList\", 1, 3)";
+        }
+
+        // 特一盤/特二盤: same N=board-index pattern by extrapolation only —
+        // not confirmed by an actual recorded selection the way boards 1-3
+        // were, so the script itself carries a "未検証" reminder comment.
+        const string specialBoard1Script = "-- 未検証: 実際に選択して確認できていません\ncallback(\"XBMStageList\", 1, 4)";
+        this.configuration.CrucibleBoardScripts.TryGetValue("特一盤", out var specialBoard1Existing);
+        if (string.IsNullOrWhiteSpace(specialBoard1Existing) || specialBoard1Existing != specialBoard1Script)
+        {
+            this.configuration.CrucibleBoardScripts["特一盤"] = specialBoard1Script;
+        }
+
+        const string specialBoard2Script = "-- 未検証: 実際に選択して確認できていません\ncallback(\"XBMStageList\", 1, 5)";
+        this.configuration.CrucibleBoardScripts.TryGetValue("特二盤", out var specialBoard2Existing);
+        if (string.IsNullOrWhiteSpace(specialBoard2Existing) || specialBoard2Existing != specialBoard2Script)
+        {
+            this.configuration.CrucibleBoardScripts["特二盤"] = specialBoard2Script;
+        }
+
+        // One-time migration: named route presets replaced the old
+        // one-route-per-board scheme. Fold any already-recorded route into
+        // a "デフォルト" preset so it isn't lost, then clear the legacy
+        // field — CrucibleBoardRoutes is empty on every load after this
+        // runs once, so this is a no-op from then on.
+        foreach (var (board, legacyWaypoints) in this.configuration.CrucibleBoardRoutes)
+        {
+            if (legacyWaypoints.Count == 0)
+            {
+                continue;
+            }
+
+            if (!this.configuration.CrucibleBoardRoutePresets.TryGetValue(board, out var presets))
+            {
+                presets = [];
+                this.configuration.CrucibleBoardRoutePresets[board] = presets;
+            }
+
+            if (presets.Count == 0)
+            {
+                presets.Add(new CrucibleRoutePreset { Name = "デフォルト", Waypoints = legacyWaypoints });
+                this.configuration.SelectedRoutePresetByBoard[board] = "デフォルト";
+            }
+        }
+
+        this.configuration.CrucibleBoardRoutes.Clear();
+
         this.beastData = new BeastDataService(dataManager, log);
         this.destinations = new BeastDestinationService(pluginInterface, dataManager, this.beastData, log);
         this.navmesh = new NavmeshService(pluginInterface, condition, log);
         this.teleport = new TeleportService(aetherytes, log);
         this.mount = new MountService(log);
         this.tamingState = new BeastTamingStateService(this.gameGui, this.beastData, this.configuration, log);
+        this.bossModDodge = new BossModDodgeService(pluginInterface, condition, log);
+        if (this.configuration.BossModDodgeEnabled)
+        {
+            this.bossModDodge.SetEnabled(true);
+        }
+
+        this.luaAutomation = new LuaAutomationService(objectTable, targetManager, this.gameGui, log);
+        this.luaRecorder = new LuaRecorderService(gameInterop, log);
+        this.nearbyObjectDump = new NearbyObjectDumpService(objectTable, log);
+        this.crucibleBoard = new CrucibleBoardService(this.configuration, this.gameGui, this.luaAutomation, log);
+        this.crucibleReadyCheck = new CrucibleReadyCheckService(this.configuration, this.gameGui, log);
+        this.crucibleCombat = new CrucibleCombatService(this.configuration, objectTable, condition, this.clientState, commandManager, this.navmesh, pluginInterface, log);
+        this.crucibleRecoveryItem = new CrucibleRecoveryItemService(this.configuration, objectTable, condition, this.clientState, sigScanner, log);
+        this.crucibleLoot = new CrucibleLootService(this.configuration, this.gameGui, log);
+        this.crucibleResult = new CrucibleResultService(this.configuration, this.gameGui, log);
+        this.crucibleTreasure = new CrucibleTreasureService(this.configuration, this.gameGui, log);
+        this.crucibleShop = new CrucibleShopService(this.configuration, this.gameGui, log);
+        this.crucibleLoop = new CrucibleLoopService(this.configuration, this.SaveConfiguration, log);
+        this.crucibleRoute = new CrucibleRouteService(this.configuration, objectTable, condition, this.clientState, this.navmesh, this.SaveConfiguration, log);
+        this.questionable = new QuestionableIpcService(pluginInterface, log);
+        this.crucibleEntry = new CrucibleEntryService(this.configuration, this.clientState, objectTable, this.gameGui, this.navmesh, this.questionable, log);
 
         this.clientState.TerritoryChanged += this.OnTerritoryChanged;
         framework.Update += this.OnFrameworkUpdate;
@@ -84,14 +197,27 @@ public sealed class Plugin : IDalamudPlugin
             this.destinations,
             this.navmesh,
             this.tamingState,
+            this.bossModDodge,
+            this.crucibleBoard,
+            this.crucibleReadyCheck,
+            this.crucibleCombat,
+            this.crucibleRecoveryItem,
+            this.crucibleLoot,
+            this.crucibleResult,
+            this.crucibleTreasure,
+            this.crucibleShop,
+            this.crucibleLoop,
+            this.crucibleRoute,
+            this.crucibleEntry,
             this.gameGui,
             this.TeleportToDestination,
             this.SaveConfiguration,
-            this.SyncBeastNote);
+            this.SyncBeastNote,
+            this.SetBossModDodgeEnabled);
 
         // The main window always starts closed. It is only shown on an explicit
         // /beasthelper, the title-bar / config button, or the plugin installer.
-        this.debugWindow = new DebugWindow(this.tamingState);
+        this.debugWindow = new DebugWindow(this.configuration, this.tamingState, this.luaAutomation, this.luaRecorder, this.nearbyObjectDump, this.crucibleRoute);
 
         this.windowSystem.AddWindow(this.mainWindow);
         this.windowSystem.AddWindow(this.debugWindow);
@@ -119,7 +245,16 @@ public sealed class Plugin : IDalamudPlugin
         this.pluginInterface.UiBuilder.OpenConfigUi -= this.ToggleMainWindow;
         this.pluginInterface.UiBuilder.OpenMainUi -= this.ToggleMainWindow;
         this.windowSystem.RemoveAllWindows();
+        this.bossModDodge.SetEnabled(false);
+        this.luaRecorder.Dispose();
         this.SaveConfiguration();
+    }
+
+    private void SetBossModDodgeEnabled(bool enabled)
+    {
+        this.configuration.BossModDodgeEnabled = enabled;
+        this.SaveConfiguration();
+        this.bossModDodge.SetEnabled(enabled);
     }
 
     private void OnCommand(string command, string arguments)
@@ -149,6 +284,7 @@ public sealed class Plugin : IDalamudPlugin
                 break;
             case "debug":
                 this.debugWindow.IsOpen = !this.debugWindow.IsOpen;
+                this.chat.Print($"[BeastHelper] Debug window: {(this.debugWindow.IsOpen ? "open" : "closed")}.");
                 break;
             case "reload":
                 this.beastData.Reload();
@@ -240,6 +376,26 @@ public sealed class Plugin : IDalamudPlugin
         {
             this.navmesh.Update(player.Position);
         }
+
+        this.bossModDodge.Tick();
+        this.crucibleBoard.Tick();
+        this.crucibleReadyCheck.Tick();
+        this.crucibleCombat.Tick();
+        this.crucibleRecoveryItem.Tick();
+        this.crucibleResult.Tick();
+        this.crucibleTreasure.Tick();
+        this.crucibleShop.Tick();
+        this.crucibleLoot.Tick();
+        this.luaAutomation.Tick();
+
+        // Don't fight the player's own manual "Move" for control of vnavmesh.
+        if (this.pendingDestination is null)
+        {
+            this.crucibleEntry.Tick();
+        }
+
+        this.crucibleLoop.Tick(this.crucibleEntry.NpcDetected);
+        this.crucibleRoute.Tick(this.crucibleEntry.NpcDetected);
 
         this.TryAutoSyncBeastNote();
     }

@@ -1,3 +1,4 @@
+using BeastNav.Models;
 using Dalamud.Configuration;
 
 namespace BeastNav;
@@ -10,6 +11,174 @@ public sealed class Configuration : IPluginConfiguration
     public bool Fly { get; set; }
 
     public float StopDistance { get; set; } = 7.5f;
+
+    // --- BossModReborn dodge hand-off ------------------------------------------
+    // EXPERIMENTAL. Toggles BMR's own movement-only autorotation module
+    // (NormalMovement) via IPC — BeastHelper never computes danger geometry or
+    // picks a destination itself, it just asks BMR to move. Only does anything
+    // useful while BMR has a module loaded for the current fight. In-combat
+    // movement automation (against the FFXIV ToS); off by default.
+    public bool BossModDodgeEnabled { get; set; }
+
+    // --- Crucible auto-entry (the whole NPC → board → battle → loot loop) -----
+    // EXPERIMENTAL. One master switch covering the unattended loop: walks to
+    // and talks to the Crucible entry NPC (Central Shroud), selects the
+    // configured board and confirms it once XBMStageList is open, and
+    // auto-clicks "すべて入手" (plus its Yes/No confirmation) on the
+    // post-battle loot screen (XBMContentsBooty). Never picks a content
+    // variant beyond the configured board, a beast loadout, or a route
+    // within a board.
+    // Unattended movement, NPC interaction, and UI interaction (against the
+    // FFXIV ToS); off by default.
+    public bool AutoEnterCrucibleEnabled { get; set; }
+
+    // --- Crucible "戦闘開始" auto-click, kept separate from the switch above ---
+    // EXPERIMENTAL. XBMStageDetailList's own "戦闘開始" button is reused for
+    // two different moments: confirming a route (harmless to auto-click) and
+    // actually starting an individual fight (which needs the beast/whistle
+    // loadout picked first — not yet automatable, see CrucibleBoardScripts'
+    // notes). Auto-clicking it unconditionally would race past that manual
+    // step before whistles are set, so this stays a separate, off-by-default
+    // toggle rather than folding into AutoEnterCrucibleEnabled — turn it on
+    // only once whistle selection is either done by hand first or no longer
+    // needed for what you're doing.
+    public bool AutoStartBattleEnabled { get; set; }
+
+    // --- Crucible combat hand-off -----------------------------------------------
+    // EXPERIMENTAL. Once a hostile enemy is nearby, walks the character to it
+    // (sticking to that one tracked enemy — see CrucibleCombatService's own
+    // remarks for why this replaces the earlier, removed approach-movement
+    // that re-picked "nearest" every tick and was unstable) and enables
+    // RotationSolverReborn's own Auto mode via its chat command so it picks
+    // targets and uses actions; disables RSR and stops moving again once no
+    // enemy is tracked. Force-using "ひきつけろ" at low HP was also tried and
+    // stays removed (unreliable in practice) — BeastHelper never chooses
+    // rotation settings, positionals, or actions itself here; that stays
+    // entirely RSR's job once in range.
+    // Unattended movement and combat automation (against the FFXIV ToS); off
+    // by default, and only does anything once AutoEnterCrucibleEnabled is
+    // also on. Requires RotationSolverReborn installed and enabled; does
+    // nothing (safely) otherwise.
+    public bool AutoCombatEnabled { get; set; }
+
+    // --- Crucible auto-entry loop count ------------------------------------------
+    // How many entry→クリア→戦利品受取→NPC前に戻る cycles AutoEnterCrucibleEnabled
+    // runs before CrucibleLoopService turns it back off by itself. Counted off
+    // CrucibleEntryService.NpcDetected transitioning to true again — the entry
+    // NPC being genuinely found once more, not just a screen closing — since a
+    // run isn't really over until the character is actually back in front of
+    // it. The very first detection only marks the start of loop 1 (nothing to
+    // complete yet); the second detection closes loop 1, the third closes
+    // loop 2, and so on.
+    // 0 = unlimited — loops forever until turned off by hand, which was the
+    // only behavior before this field existed, so old configs (where this is
+    // absent and defaults to 0) keep working unchanged. 1 = run once, no repeat.
+    // The completed count resets whenever AutoEnterCrucibleEnabled transitions
+    // from off to on, so re-enabling by hand always starts a fresh count.
+    public int CrucibleLoopCount { get; set; }
+
+    // --- Crucible in-duty recovery item auto-use --------------------------------
+    // EXPERIMENTAL. Once the player's HP drops below AutoRecoveryItemHpThreshold
+    // while fighting inside a Crucible board, auto-uses the duty's own
+    // "魔獣回復薬" (a content-distributed item, not a normal inventory potion) via
+    // its dedicated hotbar-slot mapping. Ported from BOCXIV/Beastmaster-JP's
+    // BeastmasterCrucibleItemService. Never touches any other item.
+    // Unattended item use (against the FFXIV ToS); off by default, and only
+    // does anything once AutoEnterCrucibleEnabled is also on.
+    public bool AutoRecoveryItemEnabled { get; set; }
+
+    public float AutoRecoveryItemHpThreshold { get; set; } = 30f;
+
+    // --- Crucible board auto-select ---------------------------------------------
+    // EXPERIMENTAL. Was removed entirely after two real game crashes were
+    // traced to the board-select callback firing the instant XBMStageList
+    // became visible (see CrucibleBoardService's remarks). Reintroduced with
+    // a fixed delay (CrucibleBoardService.BoardSelectDelay, currently 2s)
+    // after the list becomes visible before firing once, on the theory that
+    // the list's own data settling was part of the original problem — this
+    // is unverified, so kept as its own toggle rather than folded back into
+    // AutoEnterCrucibleEnabled.
+    // Unattended UI interaction (against the FFXIV ToS); off by default, and
+    // only does anything once AutoEnterCrucibleEnabled is also on.
+    public bool AutoSelectBoardEnabled { get; set; }
+
+    // Which board CrucibleBoardService auto-selects (via the matching entry
+    // in CrucibleBoardScripts) whenever XBMStageList is open, as long as
+    // AutoEnterCrucibleEnabled and AutoSelectBoardEnabled are both on.
+    // Chosen from the 闘獣練 tab's dropdown.
+    public string SelectedCrucibleBoard { get; set; } = "第一盤";
+
+    // --- Crucible per-board Lua scripts ----------------------------------------
+    // EXPERIMENTAL. User-authored MoonSharp Lua scripts, one per board
+    // variant. Whichever one matches SelectedCrucibleBoard is run by
+    // CrucibleBoardService once XBMStageList (the board-select screen) has
+    // been visible for BoardSelectDelay (see LuaAutomationService for what a
+    // script can call). Lets board-specific click sequences be captured and
+    // edited without hardcoding a C# branch per board.
+    // Unattended UI/game interaction (against the FFXIV ToS); off unless
+    // AutoEnterCrucibleEnabled and AutoSelectBoardEnabled are both on.
+    //
+    // XBMStageList (the board-select list) confirms a highlighted row via
+    // callback("XBMStageList", 1, N) where N is the 1-based board number —
+    // confirmed for boards 1-3 (第一盤/第二盤/第三盤) by recording an actual
+    // manual selection with LuaRecorderService. 特一盤/特二盤 (N=4,5) follow
+    // the same numbering by extrapolation only — not yet confirmed the same
+    // way, so their entries carry a "未検証" Lua comment as a standing
+    // reminder before enabling 盤面を自動選択 on them.
+    //
+    // That opens the beast-party screen (XBMPetParty), where the 10-beast
+    // roster and the per-fight 3-whistle loadout both still need to be
+    // picked by hand: the game's own "おすすめ編成" (recommend) button
+    // optimizes for the fight rather than for which beasts still need
+    // rank-up XP, and hand-picking specific beasts safely wasn't possible
+    // (the natural click target turned out to be a Collision/FocusNode,
+    // which crashed the game when its event was replayed without real
+    // AtkEventData) — so this stops at board selection and leaves the rest
+    // of that screen, plus "戦闘開始" (its own separate toggle), to the
+    // player.
+    public Dictionary<string, string> CrucibleBoardScripts { get; set; } = new()
+    {
+        ["第一盤"] = "callback(\"XBMStageList\", 1, 1)",
+        ["第二盤"] = "callback(\"XBMStageList\", 1, 2)",
+        ["第三盤"] = "callback(\"XBMStageList\", 1, 3)",
+        ["特一盤"] = "-- 未検証: 実際に選択して確認できていません\ncallback(\"XBMStageList\", 1, 4)",
+        ["特二盤"] = "-- 未検証: 実際に選択して確認できていません\ncallback(\"XBMStageList\", 1, 5)",
+    };
+
+    // --- Crucible board tile-to-tile walking route -------------------------------
+    // EXPERIMENTAL. The board itself plays as a board-game map: walking onto an
+    // enemy tile changes area into a separate combat sub-zone, fights there, then
+    // returns to the same board map to continue. The tile-trigger points aren't
+    // detectable from a distance (confirmed: the EventObj that marks one only
+    // appears in the object table once already within ~2y of it, i.e. contact
+    // range — too late to serve as a walk-toward target), so unlike everywhere
+    // else in this plugin, this is recorded waypoint coordinates rather than
+    // reactive detection. Recorded per board (CrucibleRouteService's own
+    // recording API, driven from the Debug window) since each board's tile
+    // layout differs. NavmeshService.MoveCloseTo itself was never implicated in
+    // either of this plugin's two real crashes (both traced to the board-select
+    // FireCallback — see CrucibleBoardService's remarks) — only the route
+    // *feature* was deleted earlier this session, out of general crash caution,
+    // not because the movement itself was shown to be the cause.
+    // Unattended movement (against the FFXIV ToS); off by default, and only does
+    // anything once AutoEnterCrucibleEnabled is also on.
+    public bool AutoWalkRouteEnabled { get; set; }
+
+    // Multiple named waypoint sequences per board, so different paths (or
+    // revisions while tuning one) can be kept side by side instead of
+    // overwriting the only copy. Keyed by board name; CrucibleRouteService
+    // walks whichever preset name SelectedRoutePresetByBoard[board] points
+    // to (falling back to the first preset found if unset or no longer
+    // present).
+    public Dictionary<string, List<CrucibleRoutePreset>> CrucibleBoardRoutePresets { get; set; } = new();
+
+    public Dictionary<string, string> SelectedRoutePresetByBoard { get; set; } = new();
+
+    // Legacy: one unnamed route per board, from before presets existed.
+    // Kept only so Plugin.cs's startup migration can fold any
+    // already-recorded route into a "デフォルト" preset; never written to
+    // again afterward.
+    public Dictionary<string, List<CrucibleWaypoint>> CrucibleBoardRoutes { get; set; } = new();
 
     // --- Manual "I don't need this pet" list (user controlled) ---------------
     // Toggled from the pet list. Never written by the bestiary sync.

@@ -24,10 +24,23 @@ public sealed class MainWindow : Window
     private readonly BeastDestinationService destinations;
     private readonly NavmeshService navmesh;
     private readonly BeastTamingStateService tamingState;
+    private readonly BossModDodgeService bossModDodge;
+    private readonly CrucibleBoardService crucibleBoard;
+    private readonly CrucibleReadyCheckService crucibleReadyCheck;
+    private readonly CrucibleCombatService crucibleCombat;
+    private readonly CrucibleRecoveryItemService crucibleRecoveryItem;
+    private readonly CrucibleLootService crucibleLoot;
+    private readonly CrucibleResultService crucibleResult;
+    private readonly CrucibleTreasureService crucibleTreasure;
+    private readonly CrucibleShopService crucibleShop;
+    private readonly CrucibleLoopService crucibleLoop;
+    private readonly CrucibleRouteService crucibleRoute;
+    private readonly CrucibleEntryService crucibleEntry;
     private readonly IGameGui gameGui;
     private readonly Action<BeastDestination> teleport;
     private readonly Action saveConfiguration;
     private readonly Action syncBeastNote;
+    private readonly Action<bool> setBossModDodgeEnabled;
     private string filter = string.Empty;
     private int selectedIndex;
 
@@ -37,10 +50,23 @@ public sealed class MainWindow : Window
         BeastDestinationService destinations,
         NavmeshService navmesh,
         BeastTamingStateService tamingState,
+        BossModDodgeService bossModDodge,
+        CrucibleBoardService crucibleBoard,
+        CrucibleReadyCheckService crucibleReadyCheck,
+        CrucibleCombatService crucibleCombat,
+        CrucibleRecoveryItemService crucibleRecoveryItem,
+        CrucibleLootService crucibleLoot,
+        CrucibleResultService crucibleResult,
+        CrucibleTreasureService crucibleTreasure,
+        CrucibleShopService crucibleShop,
+        CrucibleLoopService crucibleLoop,
+        CrucibleRouteService crucibleRoute,
+        CrucibleEntryService crucibleEntry,
         IGameGui gameGui,
         Action<BeastDestination> teleport,
         Action saveConfiguration,
-        Action syncBeastNote)
+        Action syncBeastNote,
+        Action<bool> setBossModDodgeEnabled)
         : base($"BeastHelper {VersionLabel}###BeastHelperMain")
     {
         this.configuration = configuration;
@@ -48,10 +74,23 @@ public sealed class MainWindow : Window
         this.destinations = destinations;
         this.navmesh = navmesh;
         this.tamingState = tamingState;
+        this.bossModDodge = bossModDodge;
+        this.crucibleBoard = crucibleBoard;
+        this.crucibleReadyCheck = crucibleReadyCheck;
+        this.crucibleCombat = crucibleCombat;
+        this.crucibleRecoveryItem = crucibleRecoveryItem;
+        this.crucibleLoot = crucibleLoot;
+        this.crucibleResult = crucibleResult;
+        this.crucibleTreasure = crucibleTreasure;
+        this.crucibleShop = crucibleShop;
+        this.crucibleLoop = crucibleLoop;
+        this.crucibleRoute = crucibleRoute;
+        this.crucibleEntry = crucibleEntry;
         this.gameGui = gameGui;
         this.teleport = teleport;
         this.saveConfiguration = saveConfiguration;
         this.syncBeastNote = syncBeastNote;
+        this.setBossModDodgeEnabled = setBossModDodgeEnabled;
         this.SizeConstraints = new WindowSizeConstraints
         {
             MinimumSize = new Vector2(620, 430),
@@ -70,9 +109,26 @@ public sealed class MainWindow : Window
 
     public override void Draw()
     {
-        this.DrawControls();
-        ImGui.Separator();
-        this.DrawPetList();
+        if (!ImGui.BeginTabBar("##BeastHelperTabs"))
+        {
+            return;
+        }
+
+        if (ImGui.BeginTabItem("図鑑"))
+        {
+            this.DrawControls();
+            ImGui.Separator();
+            this.DrawPetList();
+            ImGui.EndTabItem();
+        }
+
+        if (ImGui.BeginTabItem("闘獣練"))
+        {
+            this.DrawCrucibleTab();
+            ImGui.EndTabItem();
+        }
+
+        ImGui.EndTabBar();
     }
 
     private void DrawControls()
@@ -143,6 +199,247 @@ public sealed class MainWindow : Window
 
         ImGui.SetNextItemWidth(-1);
         ImGui.InputTextWithHint("##filter", "Filter by name, No, or description", ref this.filter, 256);
+    }
+
+    private void DrawCrucibleTab()
+    {
+        ImGui.TextWrapped("闘獣練 (Crucible of the Unbroken) 向けの実験的機能です。");
+        ImGui.Spacing();
+
+        ImGui.TextUnformatted("自動化");
+        ImGui.Separator();
+
+        var dodgeEnabled = this.configuration.BossModDodgeEnabled;
+        if (ImGui.Checkbox("BMR回避連携", ref dodgeEnabled))
+        {
+            this.setBossModDodgeEnabled(dodgeEnabled);
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "BossModRebornの移動専用モジュール(NormalMovement)をIPC経由でON/OFFします。\n"
+                + "戦闘技の選択には一切触れません、移動のみBMRに任せます。\n"
+                + "対象のコンテンツにBMRのモジュールが無い場合は何も起きません。");
+        }
+
+        ImGui.SameLine();
+        ImGui.TextDisabled($"BMR module: {(this.bossModDodge.HasActiveModule ? "yes" : "no")} / {this.bossModDodge.Status}");
+
+        var autoEnter = this.configuration.AutoEnterCrucibleEnabled;
+        if (ImGui.Checkbox("自動突入", ref autoEnter))
+        {
+            this.configuration.AutoEnterCrucibleEnabled = autoEnter;
+            this.saveConfiguration();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "ONの間、中央森林の入口NPC(ラウダ)へ自動で近づいて話しかけ、\n"
+                + "参加確認(突入)、盤内の宝箱画面(XBMContentsTreasure、常に1番目の\n"
+                + "アイテムを選択)、ショップ画面(XBMContentsItemShop、何も買わずに終了)、\n"
+                + "戦闘後の結果画面(XBMResult)の「次のページ」/「退出」、戦利品画面\n"
+                + "(XBMContentsBooty)の「すべて入手」とその確認ダイアログまで、\n"
+                + "一連の流れを自動で進めます。\n"
+                + "呼び笛(戦闘直前の3体選択)・魔獣編成・ルート・コンテンツ内容の選択には\n"
+                + "触れません(手動で行ってください)。盤面選択(XBMStageList)は下の別チェック\n"
+                + "で分けています(過去に2回クラッシュした経緯があるため)。\n"
+                + "「戦闘開始」ボタン自体も下の別チェックで分けています(呼び笛設定前に\n"
+                + "自動で押されてしまうのを防ぐため)。\n"
+                + "注意: 参加確認(ContentsFinderConfirm)はゲーム共通の画面なので、ONの間は\n"
+                + "闘獣練以外のコンテンツの参加確認も自動で「突入」してしまいます。");
+        }
+
+        var loopCount = this.configuration.CrucibleLoopCount;
+        ImGui.SetNextItemWidth(100);
+        if (ImGui.InputInt("周回回数(0=無制限)", ref loopCount))
+        {
+            this.configuration.CrucibleLoopCount = Math.Max(0, loopCount);
+            this.saveConfiguration();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "突入NPCを再度検知できたタイミングを「1周完了」の区切りとして数え、\n"
+                + "指定した回数に達したら自動突入を自動でOFFに戻します。\n"
+                + "最初にNPCを見つけるまでは1周目の最中として扱うので、そこではまだ\n"
+                + "カウントされません(2回目の検知で1周完了になります)。\n"
+                + "0なら従来通り無制限に周回し続けます。1なら1回きりで周回しません。\n"
+                + "カウントは自動突入を手動でONにするたびリセットされます。");
+        }
+
+        ImGui.Indent();
+        ImGui.TextDisabled($"突入: {this.crucibleEntry.Status}");
+        ImGui.TextDisabled($"突入確認: {this.crucibleReadyCheck.Status}");
+        ImGui.TextDisabled($"結果画面: {this.crucibleResult.Status}");
+        ImGui.TextDisabled($"宝箱: {this.crucibleTreasure.Status}");
+        ImGui.TextDisabled($"ショップ: {this.crucibleShop.Status}");
+        ImGui.TextDisabled($"戦利品: {this.crucibleLoot.Status}");
+        ImGui.TextDisabled($"周回: {this.crucibleLoop.Status}");
+        ImGui.Unindent();
+
+        ImGui.Spacing();
+
+        var autoSelectBoard = this.configuration.AutoSelectBoardEnabled;
+        if (ImGui.Checkbox("盤面を自動選択", ref autoSelectBoard))
+        {
+            this.configuration.AutoSelectBoardEnabled = autoSelectBoard;
+            this.saveConfiguration();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "盤面選択画面(XBMStageList)が開いたら、下で選んだ盤面を自動でクリック\n"
+                + "します。表示されてから2秒待ってから選択します。\n"
+                + "警告: この自動選択は過去に2回、実際のゲームクラッシュ\n"
+                + "(AgentXBMStageDetailList.Update内)の原因とほぼ断定された機能です。\n"
+                + "2秒待機は再発防止のための対策ですが、原因がタイミングだったと\n"
+                + "確証があるわけではありません。ONにする場合は自己責任で慎重に。");
+        }
+
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(140);
+        if (ImGui.BeginCombo("盤面##crucibleBoard", this.configuration.SelectedCrucibleBoard))
+        {
+            foreach (var boardName in this.configuration.CrucibleBoardScripts.Keys)
+            {
+                var isSelected = boardName == this.configuration.SelectedCrucibleBoard;
+                if (ImGui.Selectable(boardName, isSelected))
+                {
+                    this.configuration.SelectedCrucibleBoard = boardName;
+                    this.saveConfiguration();
+                }
+
+                if (isSelected)
+                {
+                    ImGui.SetItemDefaultFocus();
+                }
+            }
+
+            ImGui.EndCombo();
+        }
+
+        ImGui.TextDisabled($"盤面: {this.crucibleBoard.Status}");
+
+        var autoStartBattle = this.configuration.AutoStartBattleEnabled;
+        if (ImGui.Checkbox("戦闘開始を自動クリック", ref autoStartBattle))
+        {
+            this.configuration.AutoStartBattleEnabled = autoStartBattle;
+            this.saveConfiguration();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "盤面画面(XBMStageDetailList)の「戦闘開始」ボタンを自動でクリックします。\n"
+                + "この画面は呼び笛(連れて行く3体)を選ぶ画面と同じボタンを使い回すため、\n"
+                + "呼び笛の自動選択がまだ無い今の状態でONにすると、魔獣を連れて行かない\n"
+                + "まま戦闘に入ってしまいます。呼び笛は手動で設定してからONにするか、\n"
+                + "設定後に手動で「戦闘開始」を押してください。");
+        }
+
+        ImGui.Spacing();
+
+        var autoWalkRoute = this.configuration.AutoWalkRouteEnabled;
+        if (ImGui.Checkbox("ルート自動移動", ref autoWalkRoute))
+        {
+            this.configuration.AutoWalkRouteEnabled = autoWalkRoute;
+            this.saveConfiguration();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "盤面マップ上で、下で選んだルートを順番に歩きます。敵が近くにいる間・\n"
+                + "戦闘中は移動を止め、戦闘自動化側に任せます。ルート自体はデバッグ\n"
+                + "ウィンドウで作成するもので、ここでは用意されたルートを選ぶだけです。\n"
+                + "マスへの誘導はゲーム内でGameObjectとして検知できない(接触直前まで\n"
+                + "現れない)ため、座標を記録する方式です。");
+        }
+
+        var routePresetNames = this.crucibleRoute.PresetNames;
+        ImGui.SetNextItemWidth(200);
+        if (ImGui.BeginCombo("使用するルート##routePresetSelect", routePresetNames.Count == 0 ? "(未作成)" : this.crucibleRoute.ActivePresetName))
+        {
+            foreach (var name in routePresetNames)
+            {
+                var isSelected = name == this.crucibleRoute.ActivePresetName;
+                if (ImGui.Selectable(name, isSelected))
+                {
+                    this.crucibleRoute.SelectPreset(name);
+                }
+
+                if (isSelected)
+                {
+                    ImGui.SetItemDefaultFocus();
+                }
+            }
+
+            ImGui.EndCombo();
+        }
+
+        ImGui.SameLine();
+        ImGui.TextDisabled($"{this.crucibleRoute.Status} ({this.crucibleRoute.WaypointCount}地点)");
+
+        ImGui.Spacing();
+
+        var autoCombat = this.configuration.AutoCombatEnabled;
+        if (ImGui.Checkbox("戦闘自動化 (RSR連携)", ref autoCombat))
+        {
+            this.configuration.AutoCombatEnabled = autoCombat;
+            this.saveConfiguration();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "近くに敵を見つけたら1体に狙いを定めて接近し(倒れるまでその敵を\n"
+                + "追い続けます — 毎回「一番近い敵」を選び直す方式は動作が不安定だった\n"
+                + "ため、AutoDutyの移動処理を参考に1体固定に変更しました)、射程内に\n"
+                + "入ったらRotationSolverRebornのAutoモードを「/rotation Auto」でONにして\n"
+                + "戦闘を任せます。戦闘に入ったら接近は止め、以降はRSRに任せます。敵が\n"
+                + "いなくなったら自動でOFFに戻します。低HP時の「ひきつけろ」強制発動は\n"
+                + "不安定だったため外したままです。技・ローテーション・ポジショナルの\n"
+                + "選択には一切触れません(すべてRSR側に任せます)。RSR未導入の場合は\n"
+                + "戦闘の自動切替は何も起きません。");
+        }
+
+        ImGui.SameLine();
+        ImGui.TextDisabled($"{this.crucibleCombat.Status} / RSR: {(this.crucibleCombat.RsrReportsActive ? "active" : "inactive")}");
+
+        ImGui.Spacing();
+
+        var autoRecoveryItem = this.configuration.AutoRecoveryItemEnabled;
+        if (ImGui.Checkbox("回復薬を自動使用", ref autoRecoveryItem))
+        {
+            this.configuration.AutoRecoveryItemEnabled = autoRecoveryItem;
+            this.saveConfiguration();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "戦闘中、自身のHPが下の閾値を下回ったら闘獣練の「魔獣回復薬」を自動で\n"
+                + "使用します(通常のポーション類ではなく、コンテンツ内配布の専用アイテム)。\n"
+                + "所持している中で使用可能な最上位のものを自動選択します。\n"
+                + "ネイティブ関数のシグネチャ検索に失敗した場合は自動的に無効化されます。");
+        }
+
+        var recoveryThreshold = this.configuration.AutoRecoveryItemHpThreshold;
+        ImGui.SetNextItemWidth(160);
+        if (ImGui.SliderFloat("HP閾値(%)##recoveryItem", ref recoveryThreshold, 1f, 100f, "%.0f"))
+        {
+            this.configuration.AutoRecoveryItemHpThreshold = Math.Clamp(recoveryThreshold, 1f, 100f);
+            this.saveConfiguration();
+        }
+
+        ImGui.SameLine();
+        ImGui.TextDisabled(this.crucibleRecoveryItem.Status);
+
+        ImGui.TextDisabled("魔獣編成(呼び笛)の自動化は今のところ未対応です(手動で設定してください)。");
     }
 
     private void DrawPetList()
