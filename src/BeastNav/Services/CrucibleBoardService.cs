@@ -6,14 +6,17 @@ namespace BeastNav.Services;
 /// <summary>
 /// Auto-selects the configured board on the list (<c>XBMStageList</c>) once
 /// <see cref="Configuration.AutoEnterCrucibleEnabled"/> and
-/// <see cref="Configuration.AutoSelectBoardEnabled"/> are both on, and
-/// auto-clicks the "戦闘開始" (start battle) button on the resulting board
-/// screen (<c>XBMStageDetailList</c>) once <see cref="Configuration.AutoStartBattleEnabled"/>
-/// is also on — replaying the node's own already-registered click event back
-/// at the addon for the button, the same trick community UI-automation
-/// helpers (e.g. ECommons' <c>ClickAddonButton</c>) use, rather than
-/// simulating a raw mouse click.
+/// <see cref="Configuration.AutoSelectBoardEnabled"/> are both on.
 /// </summary>
+/// <remarks>
+/// Used to also auto-click the "戦闘開始" (start battle) button on the
+/// resulting board screen (<c>XBMStageDetailList</c>), but that was removed
+/// again — with whistle/beast loadout selection and board-tile movement
+/// both staying manual (see MainWindow's own notice on the 闘獣練 tab),
+/// auto-starting the fight risked doing so before the player had actually
+/// finished setting up, which is a worse failure mode than just requiring a
+/// manual click here.
+/// </remarks>
 /// <remarks>
 /// Board selection used to fire a synthesized <c>FireCallback</c> the
 /// instant <c>XBMStageList</c> became visible, and was removed entirely
@@ -34,24 +37,13 @@ namespace BeastNav.Services;
 /// than silently folded back into the master switch.
 /// </remarks>
 /// <remarks>
-/// XBMStageDetailList shows two different "戦闘開始" buttons depending on
-/// which sub-screen is up: the route/board view uses a proper Button
-/// Component Node (id 33), while the initial mode-confirm view draws its own
-/// button as a plain Res Node (id 31) that has a click event attached
-/// directly to it instead of going through a button component. Both are
-/// tried every tick; whichever one is actually present gets clicked.
-/// </remarks>
-/// <remarks>
 /// Unattended UI interaction — against the FFXIV ToS, self-responsibility.
-/// Both toggles off by default. Never picks beasts or a route within a board.
+/// Off by default. Never picks beasts, whistles, or a route within a board,
+/// and never starts the fight itself.
 /// </remarks>
 public sealed unsafe class CrucibleBoardService
 {
     private const string ListAddonName = "XBMStageList";
-    private const string StageAddonName = "XBMStageDetailList";
-    private const uint StartBattleButtonNodeId = 33;
-    private const uint StartBattleResNodeId = 31;
-    private static readonly TimeSpan Throttle = TimeSpan.FromSeconds(1.5);
 
     // How long XBMStageList must have been continuously visible before the
     // auto-select callback fires — see the class remarks for why.
@@ -61,7 +53,6 @@ public sealed unsafe class CrucibleBoardService
     private readonly IGameGui gameGui;
     private readonly LuaAutomationService luaAutomation;
     private readonly IPluginLog log;
-    private DateTime nextAttempt = DateTime.MinValue;
     private DateTime? listVisibleSinceUtc;
     private bool boardSelectedForThisVisibility;
 
@@ -86,28 +77,19 @@ public sealed unsafe class CrucibleBoardService
             return;
         }
 
-        if (this.TickBoardSelect())
-        {
-            return;
-        }
-
-        this.TickStartBattle();
-    }
-
-    /// <summary>Returns true if this tick's status was decided by the board-select step (so the caller should skip 戦闘開始 handling this frame).</summary>
-    private bool TickBoardSelect()
-    {
         var listAddon = this.FindAddon(ListAddonName);
         if (listAddon is null || !listAddon->IsVisible)
         {
             this.listVisibleSinceUtc = null;
             this.boardSelectedForThisVisibility = false;
-            return false;
+            this.Status = "盤面選択画面待ち";
+            return;
         }
 
         if (!this.configuration.AutoSelectBoardEnabled)
         {
-            return false;
+            this.Status = "盤面選択は手動";
+            return;
         }
 
         var now = DateTime.UtcNow;
@@ -115,61 +97,28 @@ public sealed unsafe class CrucibleBoardService
 
         if (this.boardSelectedForThisVisibility)
         {
-            return false;
+            this.Status = $"盤面を選択済み: {this.configuration.SelectedCrucibleBoard}";
+            return;
         }
 
         var elapsed = now - this.listVisibleSinceUtc.Value;
         if (elapsed < BoardSelectDelay)
         {
             this.Status = $"盤面選択まで待機中 ({(BoardSelectDelay - elapsed).TotalSeconds:0.0}秒)";
-            return true;
+            return;
         }
 
         if (!this.configuration.CrucibleBoardScripts.TryGetValue(this.configuration.SelectedCrucibleBoard, out var script)
             || string.IsNullOrWhiteSpace(script))
         {
             this.Status = $"盤面スクリプト未設定: {this.configuration.SelectedCrucibleBoard}";
-            return true;
+            return;
         }
 
         this.boardSelectedForThisVisibility = true;
         this.luaAutomation.Run(script);
         this.Status = $"盤面を選択: {this.configuration.SelectedCrucibleBoard}";
         this.log.Information("[BeastHelper] Crucible board: selecting {Board} after {Delay:0.0}s.", this.configuration.SelectedCrucibleBoard, elapsed.TotalSeconds);
-        return true;
-    }
-
-    private void TickStartBattle()
-    {
-        if (!this.configuration.AutoStartBattleEnabled)
-        {
-            this.Status = "戦闘開始は手動(盤面選択・呼び笛設定後にクリック)";
-            return;
-        }
-
-        var now = DateTime.UtcNow;
-        if (now < this.nextAttempt)
-        {
-            return;
-        }
-
-        var addon = this.FindAddon(StageAddonName);
-        if (addon is null || !addon->IsVisible)
-        {
-            this.Status = "盤面画面待ち";
-            return;
-        }
-
-        if (this.TryClickButtonComponent(addon, StartBattleButtonNodeId)
-            || this.TryClickEventNode(addon, StartBattleResNodeId))
-        {
-            this.nextAttempt = now + Throttle;
-            this.Status = "戦闘開始をクリック";
-            this.log.Information("[BeastHelper] Crucible board: clicked 戦闘開始.");
-            return;
-        }
-
-        this.Status = "ボタン未検出";
     }
 
     private AtkUnitBase* FindAddon(string name)
@@ -186,49 +135,4 @@ public sealed unsafe class CrucibleBoardService
         }
     }
 
-    private bool TryClickButtonComponent(AtkUnitBase* addon, uint nodeId)
-    {
-        var node = addon->GetNodeById(nodeId);
-        if (node is null)
-        {
-            return false;
-        }
-
-        // Not node->Type != NodeType.Component: the raw Type field on a
-        // component-backed node holds an internal component-kind value
-        // (e.g. 1002 for a button), not the normalized NodeType.Component
-        // (10000) that only GetNodeType() returns — comparing against that
-        // directly always failed. GetComponent() sidesteps it entirely.
-        var button = (AtkComponentButton*)node->GetComponent();
-        if (button is null)
-        {
-            return false;
-        }
-
-        var ownerNode = button->AtkComponentBase.OwnerNode;
-        if (ownerNode is null)
-        {
-            return false;
-        }
-
-        return this.TryReplayEvent(addon, &ownerNode->AtkResNode);
-    }
-
-    private bool TryClickEventNode(AtkUnitBase* addon, uint nodeId)
-    {
-        var node = addon->GetNodeById(nodeId);
-        return node is not null && this.TryReplayEvent(addon, node);
-    }
-
-    private bool TryReplayEvent(AtkUnitBase* addon, AtkResNode* node)
-    {
-        var evt = node->AtkEventManager.Event;
-        if (evt is null)
-        {
-            return false;
-        }
-
-        addon->ReceiveEvent(evt->State.EventType, (int)evt->Param, evt);
-        return true;
-    }
 }

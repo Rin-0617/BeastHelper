@@ -1,4 +1,3 @@
-using BeastNav.Models;
 using Dalamud.Configuration;
 
 namespace BeastNav;
@@ -31,18 +30,6 @@ public sealed class Configuration : IPluginConfiguration
     // Unattended movement, NPC interaction, and UI interaction (against the
     // FFXIV ToS); off by default.
     public bool AutoEnterCrucibleEnabled { get; set; }
-
-    // --- Crucible "戦闘開始" auto-click, kept separate from the switch above ---
-    // EXPERIMENTAL. XBMStageDetailList's own "戦闘開始" button is reused for
-    // two different moments: confirming a route (harmless to auto-click) and
-    // actually starting an individual fight (which needs the beast/whistle
-    // loadout picked first — not yet automatable, see CrucibleBoardScripts'
-    // notes). Auto-clicking it unconditionally would race past that manual
-    // step before whistles are set, so this stays a separate, off-by-default
-    // toggle rather than folding into AutoEnterCrucibleEnabled — turn it on
-    // only once whistle selection is either done by hand first or no longer
-    // needed for what you're doing.
-    public bool AutoStartBattleEnabled { get; set; }
 
     // --- Crucible combat hand-off -----------------------------------------------
     // EXPERIMENTAL. Once a hostile enemy is nearby, walks the character to it
@@ -144,41 +131,6 @@ public sealed class Configuration : IPluginConfiguration
         ["特一盤"] = "-- 未検証: 実際に選択して確認できていません\ncallback(\"XBMStageList\", 1, 4)",
         ["特二盤"] = "-- 未検証: 実際に選択して確認できていません\ncallback(\"XBMStageList\", 1, 5)",
     };
-
-    // --- Crucible board tile-to-tile walking route -------------------------------
-    // EXPERIMENTAL. The board itself plays as a board-game map: walking onto an
-    // enemy tile changes area into a separate combat sub-zone, fights there, then
-    // returns to the same board map to continue. The tile-trigger points aren't
-    // detectable from a distance (confirmed: the EventObj that marks one only
-    // appears in the object table once already within ~2y of it, i.e. contact
-    // range — too late to serve as a walk-toward target), so unlike everywhere
-    // else in this plugin, this is recorded waypoint coordinates rather than
-    // reactive detection. Recorded per board (CrucibleRouteService's own
-    // recording API, driven from the Debug window) since each board's tile
-    // layout differs. NavmeshService.MoveCloseTo itself was never implicated in
-    // either of this plugin's two real crashes (both traced to the board-select
-    // FireCallback — see CrucibleBoardService's remarks) — only the route
-    // *feature* was deleted earlier this session, out of general crash caution,
-    // not because the movement itself was shown to be the cause.
-    // Unattended movement (against the FFXIV ToS); off by default, and only does
-    // anything once AutoEnterCrucibleEnabled is also on.
-    public bool AutoWalkRouteEnabled { get; set; }
-
-    // Multiple named waypoint sequences per board, so different paths (or
-    // revisions while tuning one) can be kept side by side instead of
-    // overwriting the only copy. Keyed by board name; CrucibleRouteService
-    // walks whichever preset name SelectedRoutePresetByBoard[board] points
-    // to (falling back to the first preset found if unset or no longer
-    // present).
-    public Dictionary<string, List<CrucibleRoutePreset>> CrucibleBoardRoutePresets { get; set; } = new();
-
-    public Dictionary<string, string> SelectedRoutePresetByBoard { get; set; } = new();
-
-    // Legacy: one unnamed route per board, from before presets existed.
-    // Kept only so Plugin.cs's startup migration can fold any
-    // already-recorded route into a "デフォルト" preset; never written to
-    // again afterward.
-    public Dictionary<string, List<CrucibleWaypoint>> CrucibleBoardRoutes { get; set; } = new();
 
     // --- Manual "I don't need this pet" list (user controlled) ---------------
     // Toggled from the pet list. Never written by the bestiary sync.

@@ -41,7 +41,6 @@ public sealed class Plugin : IDalamudPlugin
     private readonly CrucibleTreasureService crucibleTreasure;
     private readonly CrucibleShopService crucibleShop;
     private readonly CrucibleLoopService crucibleLoop;
-    private readonly CrucibleRouteService crucibleRoute;
     private readonly QuestionableIpcService questionable;
     private readonly CrucibleEntryService crucibleEntry;
     private readonly LuaAutomationService luaAutomation;
@@ -133,33 +132,6 @@ public sealed class Plugin : IDalamudPlugin
             this.configuration.CrucibleBoardScripts["特二盤"] = specialBoard2Script;
         }
 
-        // One-time migration: named route presets replaced the old
-        // one-route-per-board scheme. Fold any already-recorded route into
-        // a "デフォルト" preset so it isn't lost, then clear the legacy
-        // field — CrucibleBoardRoutes is empty on every load after this
-        // runs once, so this is a no-op from then on.
-        foreach (var (board, legacyWaypoints) in this.configuration.CrucibleBoardRoutes)
-        {
-            if (legacyWaypoints.Count == 0)
-            {
-                continue;
-            }
-
-            if (!this.configuration.CrucibleBoardRoutePresets.TryGetValue(board, out var presets))
-            {
-                presets = [];
-                this.configuration.CrucibleBoardRoutePresets[board] = presets;
-            }
-
-            if (presets.Count == 0)
-            {
-                presets.Add(new CrucibleRoutePreset { Name = "デフォルト", Waypoints = legacyWaypoints });
-                this.configuration.SelectedRoutePresetByBoard[board] = "デフォルト";
-            }
-        }
-
-        this.configuration.CrucibleBoardRoutes.Clear();
-
         this.beastData = new BeastDataService(dataManager, log);
         this.destinations = new BeastDestinationService(pluginInterface, dataManager, this.beastData, log);
         this.navmesh = new NavmeshService(pluginInterface, condition, log);
@@ -184,7 +156,6 @@ public sealed class Plugin : IDalamudPlugin
         this.crucibleTreasure = new CrucibleTreasureService(this.configuration, this.gameGui, log);
         this.crucibleShop = new CrucibleShopService(this.configuration, this.gameGui, log);
         this.crucibleLoop = new CrucibleLoopService(this.configuration, this.SaveConfiguration, log);
-        this.crucibleRoute = new CrucibleRouteService(this.configuration, objectTable, condition, this.clientState, this.navmesh, this.SaveConfiguration, log);
         this.questionable = new QuestionableIpcService(pluginInterface, log);
         this.crucibleEntry = new CrucibleEntryService(this.configuration, this.clientState, objectTable, this.gameGui, this.navmesh, this.questionable, log);
 
@@ -207,7 +178,6 @@ public sealed class Plugin : IDalamudPlugin
             this.crucibleTreasure,
             this.crucibleShop,
             this.crucibleLoop,
-            this.crucibleRoute,
             this.crucibleEntry,
             this.gameGui,
             this.TeleportToDestination,
@@ -217,7 +187,7 @@ public sealed class Plugin : IDalamudPlugin
 
         // The main window always starts closed. It is only shown on an explicit
         // /beasthelper, the title-bar / config button, or the plugin installer.
-        this.debugWindow = new DebugWindow(this.configuration, this.tamingState, this.luaAutomation, this.luaRecorder, this.nearbyObjectDump, this.crucibleRoute);
+        this.debugWindow = new DebugWindow(this.tamingState, this.luaAutomation, this.luaRecorder, this.nearbyObjectDump);
 
         this.windowSystem.AddWindow(this.mainWindow);
         this.windowSystem.AddWindow(this.debugWindow);
@@ -395,7 +365,6 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         this.crucibleLoop.Tick(this.crucibleEntry.NpcDetected);
-        this.crucibleRoute.Tick(this.crucibleEntry.NpcDetected);
 
         this.TryAutoSyncBeastNote();
     }

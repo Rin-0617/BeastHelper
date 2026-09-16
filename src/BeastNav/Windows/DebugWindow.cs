@@ -7,31 +7,23 @@ namespace BeastNav.Windows;
 
 public sealed class DebugWindow : Window
 {
-    private readonly Configuration configuration;
     private readonly BeastTamingStateService tamingState;
     private readonly LuaAutomationService luaAutomation;
     private readonly LuaRecorderService luaRecorder;
     private readonly NearbyObjectDumpService nearbyObjectDump;
-    private readonly CrucibleRouteService crucibleRoute;
     private string luaTestInput = string.Empty;
-    private string routeRecordMessage = string.Empty;
-    private string presetNameInput = string.Empty;
 
     public DebugWindow(
-        Configuration configuration,
         BeastTamingStateService tamingState,
         LuaAutomationService luaAutomation,
         LuaRecorderService luaRecorder,
-        NearbyObjectDumpService nearbyObjectDump,
-        CrucibleRouteService crucibleRoute)
+        NearbyObjectDumpService nearbyObjectDump)
         : base("BeastHelper Debug###BeastHelperDebug")
     {
-        this.configuration = configuration;
         this.tamingState = tamingState;
         this.luaAutomation = luaAutomation;
         this.luaRecorder = luaRecorder;
         this.nearbyObjectDump = nearbyObjectDump;
-        this.crucibleRoute = crucibleRoute;
         this.SizeConstraints = new WindowSizeConstraints
         {
             MinimumSize = new Vector2(620, 280),
@@ -129,68 +121,5 @@ public sealed class DebugWindow : Window
 
         ImGui.SameLine();
         ImGui.TextDisabled(this.luaRecorder.Status);
-
-        ImGui.Separator();
-        ImGui.TextUnformatted($"闘獣練 ルート記録 — 対象盤面: {this.configuration.SelectedCrucibleBoard} (メインウィンドウの「盤面」ドロップダウンで切替)");
-
-        var presetNames = this.crucibleRoute.PresetNames;
-        var activePreset = this.crucibleRoute.ActivePresetName;
-        ImGui.SetNextItemWidth(200);
-        if (ImGui.BeginCombo("プリセット##routePreset", presetNames.Count == 0 ? "(未作成)" : activePreset))
-        {
-            foreach (var name in presetNames)
-            {
-                var isSelected = name == activePreset;
-                if (ImGui.Selectable(name, isSelected))
-                {
-                    this.crucibleRoute.SelectPreset(name);
-                }
-
-                if (isSelected)
-                {
-                    ImGui.SetItemDefaultFocus();
-                }
-            }
-
-            ImGui.EndCombo();
-        }
-
-        ImGui.SameLine();
-        if (ImGui.Button("選択中プリセットを削除") && presetNames.Count > 0)
-        {
-            this.crucibleRoute.TryDeleteActivePreset(out this.routeRecordMessage);
-        }
-
-        ImGui.SetNextItemWidth(200);
-        ImGui.InputTextWithHint("##presetNameInput", "新しいプリセット名", ref this.presetNameInput, 64);
-        ImGui.SameLine();
-        if (ImGui.Button("新規作成"))
-        {
-            this.crucibleRoute.TryCreatePreset(this.presetNameInput, out this.routeRecordMessage);
-        }
-
-        ImGui.SameLine();
-        if (ImGui.Button("選択中の名前を変更") && presetNames.Count > 0)
-        {
-            this.crucibleRoute.TryRenameActivePreset(this.presetNameInput, out this.routeRecordMessage);
-        }
-
-        if (ImGui.Button("現在地をルートに追加"))
-        {
-            this.crucibleRoute.TryAddWaypointAtCurrentPosition(out this.routeRecordMessage);
-        }
-
-        ImGui.SameLine();
-        if (ImGui.Button("選択中プリセットの地点をクリア"))
-        {
-            this.crucibleRoute.ClearActivePresetWaypoints();
-            this.routeRecordMessage = $"{this.configuration.SelectedCrucibleBoard}/{this.crucibleRoute.ActivePresetName}: 地点をクリアしました";
-        }
-
-        ImGui.TextDisabled($"記録済み地点数: {this.crucibleRoute.WaypointCount}");
-        if (!string.IsNullOrWhiteSpace(this.routeRecordMessage))
-        {
-            ImGui.TextWrapped(this.routeRecordMessage);
-        }
     }
 }

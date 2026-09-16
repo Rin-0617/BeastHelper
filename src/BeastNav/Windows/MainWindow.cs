@@ -34,7 +34,6 @@ public sealed class MainWindow : Window
     private readonly CrucibleTreasureService crucibleTreasure;
     private readonly CrucibleShopService crucibleShop;
     private readonly CrucibleLoopService crucibleLoop;
-    private readonly CrucibleRouteService crucibleRoute;
     private readonly CrucibleEntryService crucibleEntry;
     private readonly IGameGui gameGui;
     private readonly Action<BeastDestination> teleport;
@@ -60,7 +59,6 @@ public sealed class MainWindow : Window
         CrucibleTreasureService crucibleTreasure,
         CrucibleShopService crucibleShop,
         CrucibleLoopService crucibleLoop,
-        CrucibleRouteService crucibleRoute,
         CrucibleEntryService crucibleEntry,
         IGameGui gameGui,
         Action<BeastDestination> teleport,
@@ -84,7 +82,6 @@ public sealed class MainWindow : Window
         this.crucibleTreasure = crucibleTreasure;
         this.crucibleShop = crucibleShop;
         this.crucibleLoop = crucibleLoop;
-        this.crucibleRoute = crucibleRoute;
         this.crucibleEntry = crucibleEntry;
         this.gameGui = gameGui;
         this.teleport = teleport;
@@ -204,6 +201,7 @@ public sealed class MainWindow : Window
     private void DrawCrucibleTab()
     {
         ImGui.TextWrapped("闘獣練 (Crucible of the Unbroken) 向けの実験的機能です。");
+        ImGui.TextWrapped("盤内のマスからマスへの移動は自動化できません。手動で移動してください。");
         ImGui.Spacing();
 
         ImGui.TextUnformatted("自動化");
@@ -242,11 +240,10 @@ public sealed class MainWindow : Window
                 + "戦闘後の結果画面(XBMResult)の「次のページ」/「退出」、戦利品画面\n"
                 + "(XBMContentsBooty)の「すべて入手」とその確認ダイアログまで、\n"
                 + "一連の流れを自動で進めます。\n"
-                + "呼び笛(戦闘直前の3体選択)・魔獣編成・ルート・コンテンツ内容の選択には\n"
-                + "触れません(手動で行ってください)。盤面選択(XBMStageList)は下の別チェック\n"
-                + "で分けています(過去に2回クラッシュした経緯があるため)。\n"
-                + "「戦闘開始」ボタン自体も下の別チェックで分けています(呼び笛設定前に\n"
-                + "自動で押されてしまうのを防ぐため)。\n"
+                + "呼び笛(戦闘直前の3体選択)・魔獣編成・ルート・コンテンツ内容の選択・\n"
+                + "「戦闘開始」ボタンには触れません(手動で行ってください)。盤面選択\n"
+                + "(XBMStageList)は下の別チェックで分けています(過去に2回クラッシュ\n"
+                + "した経緯があるため)。\n"
                 + "注意: 参加確認(ContentsFinderConfirm)はゲーム共通の画面なので、ONの間は\n"
                 + "闘獣練以外のコンテンツの参加確認も自動で「突入」してしまいます。");
         }
@@ -323,66 +320,6 @@ public sealed class MainWindow : Window
         }
 
         ImGui.TextDisabled($"盤面: {this.crucibleBoard.Status}");
-
-        var autoStartBattle = this.configuration.AutoStartBattleEnabled;
-        if (ImGui.Checkbox("戦闘開始を自動クリック", ref autoStartBattle))
-        {
-            this.configuration.AutoStartBattleEnabled = autoStartBattle;
-            this.saveConfiguration();
-        }
-
-        if (ImGui.IsItemHovered())
-        {
-            ImGui.SetTooltip(
-                "盤面画面(XBMStageDetailList)の「戦闘開始」ボタンを自動でクリックします。\n"
-                + "この画面は呼び笛(連れて行く3体)を選ぶ画面と同じボタンを使い回すため、\n"
-                + "呼び笛の自動選択がまだ無い今の状態でONにすると、魔獣を連れて行かない\n"
-                + "まま戦闘に入ってしまいます。呼び笛は手動で設定してからONにするか、\n"
-                + "設定後に手動で「戦闘開始」を押してください。");
-        }
-
-        ImGui.Spacing();
-
-        var autoWalkRoute = this.configuration.AutoWalkRouteEnabled;
-        if (ImGui.Checkbox("ルート自動移動", ref autoWalkRoute))
-        {
-            this.configuration.AutoWalkRouteEnabled = autoWalkRoute;
-            this.saveConfiguration();
-        }
-
-        if (ImGui.IsItemHovered())
-        {
-            ImGui.SetTooltip(
-                "盤面マップ上で、下で選んだルートを順番に歩きます。敵が近くにいる間・\n"
-                + "戦闘中は移動を止め、戦闘自動化側に任せます。ルート自体はデバッグ\n"
-                + "ウィンドウで作成するもので、ここでは用意されたルートを選ぶだけです。\n"
-                + "マスへの誘導はゲーム内でGameObjectとして検知できない(接触直前まで\n"
-                + "現れない)ため、座標を記録する方式です。");
-        }
-
-        var routePresetNames = this.crucibleRoute.PresetNames;
-        ImGui.SetNextItemWidth(200);
-        if (ImGui.BeginCombo("使用するルート##routePresetSelect", routePresetNames.Count == 0 ? "(未作成)" : this.crucibleRoute.ActivePresetName))
-        {
-            foreach (var name in routePresetNames)
-            {
-                var isSelected = name == this.crucibleRoute.ActivePresetName;
-                if (ImGui.Selectable(name, isSelected))
-                {
-                    this.crucibleRoute.SelectPreset(name);
-                }
-
-                if (isSelected)
-                {
-                    ImGui.SetItemDefaultFocus();
-                }
-            }
-
-            ImGui.EndCombo();
-        }
-
-        ImGui.SameLine();
-        ImGui.TextDisabled($"{this.crucibleRoute.Status} ({this.crucibleRoute.WaypointCount}地点)");
 
         ImGui.Spacing();
 
