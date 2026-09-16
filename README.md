@@ -22,11 +22,48 @@ https://github.com/Rin-0617/BeastHelper/releases
 
 Current release:
 
-- Version: `0.1.3.0`
-- Tag: `v0.1.3`
-- Artifact: `BeastHelper-v0.1.3.zip`
+- Version: `0.1.4.0`
+- Tag: `v0.1.4`
+- Artifact: `BeastHelper-v0.1.4.zip`
 - Author: `Rin`
 - Repository owner: `Rin-0617`
+
+## 闘獣練 (Crucible of the Unbroken) Assist
+
+Optional, off-by-default automation for the Beastmaster-only "Crucible of the
+Unbroken" solo duty. Every toggle lives on the 闘獣練 tab in the main window
+and defaults to off; nothing here runs unless explicitly enabled.
+
+What is implemented:
+
+- Auto-approaches and talks to the entry NPC in Central Shroud, confirms
+  participation, and (as a separate toggle) selects the configured board on
+  `XBMStageList`.
+- Hands combat off to RotationSolverReborn: tracks one nearby enemy at a
+  time, walks to it, and enables RSR's Auto mode once close so it handles
+  target and action selection.
+- Can tune BossModReborn's own movement-only autorotation module (on top of
+  the existing dodge on/off toggle) to keep melee range while dodging and
+  keep a safety margin from danger zones.
+- Auto-uses the duty's own "魔獣回復薬" recovery item below a configurable
+  HP threshold.
+- Auto-picks the first item on the mid-board treasure screen, closes the
+  shop screen without buying anything, advances the post-battle result
+  screen, and claims all loot.
+- Can be capped to a fixed number of entry→clear cycles, after which it
+  turns itself back off.
+
+What stays manual:
+
+- Movement from one board tile to the next — the tile-trigger points aren't
+  detectable from a distance, so a reactive/recorded-route approach couldn't
+  be made reliable enough.
+- The whistle/beast-party loadout screen and the "戦闘開始" (start battle)
+  button.
+
+All of the above is unattended movement, NPC interaction, UI interaction,
+and (where noted) combat automation — against the FFXIV ToS, use at your own
+discretion.
 
 ## Development Status
 
