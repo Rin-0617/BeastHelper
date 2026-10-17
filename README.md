@@ -7,26 +7,21 @@ Dalamud API 15 / .NET 10 plugin prototype for Beastmaster navigation.
 Add this custom repository URL in Dalamud's custom plugin repositories:
 
 ```text
-https://raw.githubusercontent.com/Rin-0617/BeastHelper/main/beasthelper.json
+https://raw.githubusercontent.com/Rin-0617/RinPlugins/main/pluginmaster.json
 ```
 
 After adding the repository, search for `BeastHelper` in Dalamud Plugin Installer
-and install it from the custom repository entry.
+and install it from the custom repository entry. Rin's other plugins, such as
+RaidFlow and PartySieve, are available from the same URL.
 
-The repository metadata is kept in `beasthelper.json`. Release downloads are served from
-GitHub Releases:
+If you added the old `https://raw.githubusercontent.com/Rin-0617/BeastHelper/main/beasthelper.json`
+URL, replace it with the URL above. With both registered, BeastHelper appears twice.
+
+Release downloads are served from GitHub Releases:
 
 ```text
 https://github.com/Rin-0617/BeastHelper/releases
 ```
-
-Current release:
-
-- Version: `0.1.4.0`
-- Tag: `v0.1.4`
-- Artifact: `BeastHelper-v0.1.4.zip`
-- Author: `Rin`
-- Repository owner: `Rin-0617`
 
 ## 闘獣練 (Crucible of the Unbroken) Assist
 
