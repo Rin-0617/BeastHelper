@@ -86,14 +86,14 @@ public sealed class CrucibleCombatService
     private const string RsrAutoCommand = "/rotation Auto";
     private const string RsrOffCommand = "/rotation Off";
 
-    // Central Shroud (黒衣森: 中央森林) — where the entry NPC lives. This
-    // service has no way to positively identify "actually inside a Crucible
-    // board fight" (unlike CrucibleEntryService's own territory check for
-    // the NPC), so it only excludes the one zone it's guaranteed to be wrong
-    // in: while still walking to/talking to the entry NPC, ordinary overworld
-    // wildlife there was getting picked up as a "nearby enemy" and enabling
-    // RSR before the player had even entered anything.
-    private const uint CentralShroudTerritoryId = 148;
+    // 第一盤〜特二盤 — the Crucible arena territories (same range as
+    // CrucibleRecoveryItemService / CrucibleAutoDutyIpcService). Only act
+    // inside these: anywhere else (towns, the overworld, the entry zone) any
+    // targetable BattleNpc — a striking dummy (木人), wildlife — was getting
+    // picked up as "the nearest enemy", turning RSR on and dragging the
+    // player toward it with vnavmesh every frame.
+    private const uint ArenaTerritoryMin = 1339;
+    private const uint ArenaTerritoryMax = 1343;
 
     private readonly Configuration configuration;
     private readonly IObjectTable objectTable;
@@ -153,11 +153,11 @@ public sealed class CrucibleCombatService
             return;
         }
 
-        if (this.clientState.TerritoryType == CentralShroudTerritoryId)
+        if (!IsArenaTerritory(this.clientState.TerritoryType))
         {
             this.DisableRsrIfWeEnabledIt();
             this.ForgetTrackedEnemy();
-            this.Status = "対象ゾーン外 (中央森林)";
+            this.Status = "対象ゾーン外";
             return;
         }
 
@@ -304,6 +304,9 @@ public sealed class CrucibleCombatService
             this.weEnabledRsr = false;
         }
     }
+
+    private static bool IsArenaTerritory(uint territoryId)
+        => territoryId is >= ArenaTerritoryMin and <= ArenaTerritoryMax;
 
     private static bool HasStatus(IPlayerCharacter character, uint statusId)
     {
