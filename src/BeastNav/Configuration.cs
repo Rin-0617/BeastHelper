@@ -1,3 +1,4 @@
+using BeastNav.Models;
 using Dalamud.Configuration;
 
 namespace BeastNav;
@@ -30,6 +31,22 @@ public sealed class Configuration : IPluginConfiguration
     // Unattended movement, NPC interaction, and UI interaction (against the
     // FFXIV ToS); off by default.
     public bool AutoEnterCrucibleEnabled { get; set; }
+
+    // --- AutoDuty full hand-off (experimental) -----------------------------------
+    // EXPERIMENTAL. When on, BeastHelper's own Crucible entry/board/team/
+    // whistle/treasure/shop/result/loot automation all stay off (they'd
+    // fight AutoDuty for the same UI — double-clicking buttons, racing
+    // FireCallbacks) and this plugin instead just calls
+    // AutoDuty.Run(territoryType, loops) via IPC once, handing the whole
+    // board loop to AutoDuty's own generic duty-path-replay engine — the
+    // same one that solves board-tile movement, which this plugin
+    // deliberately doesn't implement itself (see CrucibleAutoDutyIpcService's
+    // own remarks). Only the genuinely independent, read-mostly services
+    // (図鑑/level sync, BMR dodge) keep running regardless. Requires AutoDuty
+    // installed with its own Crucible support already set up on its side.
+    // Unattended UI interaction and movement (against the FFXIV ToS); off by
+    // default, and only does anything once AutoEnterCrucibleEnabled is also on.
+    public bool CrucibleAutoDutyModeEnabled { get; set; }
 
     // --- Crucible combat hand-off -----------------------------------------------
     // EXPERIMENTAL. Once a hostile enemy is nearby, walks the character to it
@@ -64,6 +81,25 @@ public sealed class Configuration : IPluginConfiguration
     // from off to on, so re-enabling by hand always starts a fresh count.
     public int CrucibleLoopCount { get; set; }
 
+    // --- Crucible mid-board treasure screen (XBMContentsTreasure) ---------------
+    // EXPERIMENTAL. Whenever the treasure screen opens, reads all 4 offered
+    // items' full effect text (confirmed via NearbyObjectDumpService/Addon
+    // Inspector: each card is a top-level Button Component Node; its
+    // multi-line effect description lives one component deeper inside it —
+    // both read-only, no risk) and compares it against this list in order.
+    // The first keyword (by list order) that appears on ANY of the 4 cards
+    // wins; among cards matching that same keyword, the one earlier in
+    // CrucibleTreasureService's own NodeId order is picked. If nothing in
+    // this list matches any of the 4 cards (including when all 4 are
+    // "このアイテムは獲得済みです。" — already obtained, nothing useful shown),
+    // it clicks "終了" and takes nothing, rather than guessing.
+    // One keyword per line, most-preferred first, matched as a plain
+    // substring against the raw displayed text (e.g. "被ダメージ", "最大HP",
+    // "クリティカル").
+    // Unattended UI interaction (against the FFXIV ToS); only does anything
+    // once AutoEnterCrucibleEnabled is on. An empty list always clicks 終了.
+    public List<string> CrucibleTreasureKeywords { get; set; } = [];
+
     // --- Crucible in-duty recovery item auto-use --------------------------------
     // EXPERIMENTAL. Once the player's HP drops below AutoRecoveryItemHpThreshold
     // while fighting inside a Crucible board, auto-uses the duty's own
@@ -75,6 +111,36 @@ public sealed class Configuration : IPluginConfiguration
     public bool AutoRecoveryItemEnabled { get; set; }
 
     public float AutoRecoveryItemHpThreshold { get; set; } = 30f;
+
+    // EXPERIMENTAL. Whenever off its shared cooldown, auto-uses one of the
+    // duty's own self-buff items (回避の書/反射の書/時の砂/魔獣剛力薬) via the
+    // same hotbar-slot mapping as the recovery item, in a fixed priority
+    // order. This is a simple "use it the moment it's available" policy —
+    // no attempt is made to time it against an incoming attack or a damage
+    // window. Item ids and the mechanism itself ported from
+    // BOCXIV/Beastmaster-JP's BeastmasterCrucibleItemService.
+    // Unattended item use (against the FFXIV ToS); off by default.
+    public bool AutoSelfBuffItemsEnabled { get; set; }
+
+    // EXPERIMENTAL. Same as AutoSelfBuffItemsEnabled, but for the duty's
+    // offensive items used on the current hostile target (吸血鬼の牙 and the
+    // six elemental 牙) — tries them in a fixed priority order, not matched
+    // against the target's actual elemental weakness (that data isn't wired
+    // up yet). Does nothing without a live, targetable enemy.
+    // Unattended item use (against the FFXIV ToS); off by default.
+    public bool AutoOffensiveItemsEnabled { get; set; }
+
+    // EXPERIMENTAL. User-defined "if these conditions hold, use this item"
+    // rules (see Models/CrucibleItemRule.cs), evaluated every tick in list
+    // order before the blanket AutoSelfBuffItemsEnabled/AutoOffensiveItemsEnabled
+    // policies — the first enabled rule whose conditions are satisfied and
+    // whose item is actually usable wins. A scaled-down port of
+    // BOCXIV/Beastmaster-JP's own rule engine (condition evaluation only,
+    // no skill actions — items only). Unattended item use (against the
+    // FFXIV ToS); off by default, and does nothing with an empty rule list.
+    public bool AutoCrucibleItemRulesEnabled { get; set; }
+
+    public List<CrucibleItemRule> CrucibleItemRules { get; set; } = [];
 
     // --- Crucible board auto-select ---------------------------------------------
     // EXPERIMENTAL. Was removed entirely after two real game crashes were
@@ -160,4 +226,80 @@ public sealed class Configuration : IPluginConfiguration
         "XBMNotebook",
     ];
 
+    // Per-beast level/exp, opportunistically read from the 図鑑 detail panel
+    // ("XBMMonsterBookDetail") whenever it happens to be open — never
+    // actively opened or paged through, so a beast never viewed in detail
+    // has no entry here even if already captured. Keyed by Pet row id, same
+    // as TamedPetRowIds. Populated by BeastTamingStateService.TickDetailPanel,
+    // ported (as a read pattern, not code) from BOCXIV/Beastmaster-JP's own
+    // passive notebook-progress watcher.
+    public Dictionary<uint, BeastProgress> BeastLevelProgress { get; set; } = [];
+
+    // EXPERIMENTAL. Whenever 魔獣手帳 (XBMMonsterNotebook) transitions from
+    // closed to open, automatically pages through both of its pages and
+    // selects each of the 50 entries in turn (a small, semantic
+    // ReceiveEvent call to the notebook's own agent — the same technique
+    // BeastmasterPetPartyService uses to add a captured beast, not a raw UI
+    // click) to read every beast's level/exp into BeastLevelProgress without
+    // the player needing to hover each row by hand. Ported (as a technique,
+    // not code) from BOCXIV/Beastmaster-JP's own BeastmasterNotebookSyncService.
+    // Unattended UI interaction (against the FFXIV ToS); off by default.
+    public bool AutoSyncBeastLevelEnabled { get; set; }
+
+    // --- Crucible pet-party (呼び笛) auto-formation -----------------------------
+    // EXPERIMENTAL. Whenever 呼び笛の設定 (XBMPetParty) is open, automatically
+    // removes any current member not in the desired team and adds any
+    // desired member not yet in the team, using the technique confirmed
+    // live in-game this session (ported from erdelf/AutoDuty's own Crucible
+    // automation): FireCallback to open/select, plus a MouseDown ReceiveEvent
+    // with a zeroed (not null) AtkEventData to actually pick a bestiary row —
+    // see CruciblePetPartyService and LuaAutomationService's own remarks for
+    // why this succeeds where three earlier native-click attempts crashed or
+    // did nothing. Unattended UI interaction (against the FFXIV ToS); off by
+    // default, and only does anything once AutoEnterCrucibleEnabled is on.
+    public bool AutoCruciblePetPartyEnabled { get; set; }
+
+    // EXPERIMENTAL. On the pre-battle screen (XBMStageDetailList shown
+    // alongside XBMPetParty), automatically assigns up to 3 current team
+    // members to the 3 whistle slots via callback("XBMPetParty", 1, row) —
+    // the same row-index convention already used for removal — then, once
+    // all picks land, also confirms "戦闘開始" itself via
+    // callback("XBMStageDetailList", 8). No separate toggle for the battle-
+    // start confirm: confirmed safe live, then folded in here rather than
+    // given its own checkbox. Ported (as a technique) from erdelf/AutoDuty's
+    // own StartFight. Unattended UI interaction (against the FFXIV ToS);
+    // off by default.
+    public bool AutoCrucibleWhistleAssignEnabled { get; set; }
+
+    // Leveling picks the lowest-ranked owned beasts first (so the whole
+    // roster climbs toward the rank cap over repeated runs); Manual uses
+    // exactly CrucibleManualTeamPetRowIds, checked off in 魔獣リスト.
+    public CrucibleTeamMode CrucibleTeamMode { get; set; } = CrucibleTeamMode.Leveling;
+
+    public List<uint> CrucibleManualTeamPetRowIds { get; set; } = [];
+
+    // --- Crucible shop auto-buy -------------------------------------------------
+    // EXPERIMENTAL. Off by default: the shop still just closes without buying,
+    // same as before. When on, buys in a fixed priority order every visit —
+    // healing items first (up to CrucibleShopHealingCap held), then gear not
+    // already owned, then at most one feed item — mirroring erdelf/AutoDuty's
+    // own ChooseBuy exactly (its own item-id categories, ported as data, are
+    // in CrucibleShopService). Each category has its own on/off switch rather
+    // than a free-text keyword list like CrucibleTreasureKeywords: the shop's
+    // own UI doesn't expose a readable item-name text node the way the
+    // treasure cards do, so matching against arbitrary user text isn't
+    // reliably buildable — these fixed, pre-verified id lists are the
+    // trustworthy alternative. Unattended UI interaction and purchases
+    // (against the FFXIV ToS); off by default.
+    public bool AutoCrucibleShopBuyEnabled { get; set; }
+
+    public bool CrucibleShopBuyHealing { get; set; } = true;
+
+    public bool CrucibleShopBuyGear { get; set; } = true;
+
+    public bool CrucibleShopBuyFeed { get; set; } = true;
+
+    // Stop buying more healing items once this many are already held —
+    // mirrors AutoDuty's own ItemCap (10).
+    public int CrucibleShopHealingCap { get; set; } = 10;
 }

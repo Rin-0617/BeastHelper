@@ -11,19 +11,24 @@ public sealed class DebugWindow : Window
     private readonly LuaAutomationService luaAutomation;
     private readonly LuaRecorderService luaRecorder;
     private readonly NearbyObjectDumpService nearbyObjectDump;
+    private readonly AddonNodeDumpService addonNodeDump;
     private string luaTestInput = string.Empty;
+    private string nodeDumpAddonName = string.Empty;
+    private int nodeDumpDrillId;
 
     public DebugWindow(
         BeastTamingStateService tamingState,
         LuaAutomationService luaAutomation,
         LuaRecorderService luaRecorder,
-        NearbyObjectDumpService nearbyObjectDump)
+        NearbyObjectDumpService nearbyObjectDump,
+        AddonNodeDumpService addonNodeDump)
         : base("BeastHelper Debug###BeastHelperDebug")
     {
         this.tamingState = tamingState;
         this.luaAutomation = luaAutomation;
         this.luaRecorder = luaRecorder;
         this.nearbyObjectDump = nearbyObjectDump;
+        this.addonNodeDump = addonNodeDump;
         this.SizeConstraints = new WindowSizeConstraints
         {
             MinimumSize = new Vector2(620, 280),
@@ -63,6 +68,30 @@ public sealed class DebugWindow : Window
             ImGui.SetTooltip("周囲100y以内の全GameObject(種別・BaseId・名前・座標・距離・ターゲット可否)を/xllogに出力します。");
         }
 
+        ImGui.SetNextItemWidth(150);
+        ImGui.InputTextWithHint("##nodeDumpAddon", "アドオン名", ref this.nodeDumpAddonName, 64);
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(90);
+        ImGui.InputInt("掘り下げNodeId(0=最上位)##nodeDumpDrillId", ref this.nodeDumpDrillId);
+        ImGui.SameLine();
+        if (ImGui.Button("Dump addon nodes to log"))
+        {
+            this.addonNodeDump.DumpNodeTree(this.nodeDumpAddonName, (uint)Math.Max(0, this.nodeDumpDrillId));
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "指定したアドオンの全ノード(NodeId・種別・コンポーネントの有無・\n"
+                + "当たり判定フラグ・クリックイベント種別・座標・サイズ・表示中の\n"
+                + "テキスト)を/xllogに一括出力します。Addon Inspectorで1つずつ\n"
+                + "調べる代わりに使えます。表示中のテキストがあれば「Label」に\n"
+                + "出るので、どのNodeIdがどの行に対応するか分かりやすくなります。\n"
+                + "掘り下げNodeIdを0以外にすると、最上位の結果で見つけた\n"
+                + "コンテナ(リスト等)らしきNodeIdを指定して、その中身(各行)を\n"
+                + "ダンプできます。");
+        }
+
         ImGui.Separator();
 
         var sync = this.tamingState.LastResult;
@@ -99,7 +128,7 @@ public sealed class DebugWindow : Window
             this.luaAutomation.Run(this.luaTestInput);
         }
 
-        ImGui.TextDisabled($"e.g. click(\"AddonName\", 4) / selectItem(\"AddonName\", 11, 0) / callback(\"AddonName\", 1, 2)  —  {this.luaAutomation.Status}");
+        ImGui.TextDisabled($"e.g. click(\"AddonName\", 4) / clickListItem(\"AddonName\", 11, 41001, \"ButtonClick\", true) / clickMouseDown(\"AddonName\", 4) / selectItem(\"AddonName\", 11, 0) / callback(\"AddonName\", 1, 2)  —  {this.luaAutomation.Status}");
 
         ImGui.Separator();
         var recording = this.luaRecorder.IsRecording;

@@ -175,7 +175,16 @@ public sealed class CrucibleCombatService
             || this.condition[ConditionFlag.BetweenAreas51]
             || this.condition[ConditionFlag.OccupiedInCutSceneEvent])
         {
-            this.DisableRsrIfWeEnabledIt();
+            // A brief "battle start" camera flourish can set the same
+            // cutscene-ish flags without actually leaving the fight — don't
+            // disable RSR on that alone, only when we're not (yet, or no
+            // longer) actually in combat. Otherwise this fired the instant
+            // combat began and turned RSR off right when it was needed.
+            if (!this.condition[ConditionFlag.InCombat])
+            {
+                this.DisableRsrIfWeEnabledIt();
+            }
+
             this.ForgetTrackedEnemy();
             this.Status = "待機(ゾーン移動中)";
             return;
@@ -210,7 +219,16 @@ public sealed class CrucibleCombatService
 
         if (tracked is null)
         {
-            this.DisableRsrIfWeEnabledIt();
+            // Same reasoning as the cutscene guard above: a tracked enemy
+            // can briefly stop resolving (e.g. turns untargetable for an
+            // instant as the real encounter kicks in) right as combat
+            // starts. Losing track of "which" enemy isn't a reason to
+            // disable RSR while we're still unambiguously in a fight.
+            if (!this.condition[ConditionFlag.InCombat])
+            {
+                this.DisableRsrIfWeEnabledIt();
+            }
+
             this.Status = "敵未検出";
             return;
         }

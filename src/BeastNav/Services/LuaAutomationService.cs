@@ -27,6 +27,41 @@ namespace BeastNav.Services;
 /// FFXIV ToS, self-responsibility. Scripts only run when explicitly started
 /// (<see cref="Run"/>); nothing here runs on its own.
 /// </remarks>
+/// <remarks>
+/// Used to also expose <c>clickNested(addon, containerNodeId, childNodeId,
+/// eventTypeName)</c>, for clicking a row nested inside another node's own
+/// component (e.g. one row of the XBMPetParty beast list) by dispatching
+/// the named event to that container component's own ReceiveEvent rather
+/// than the addon's. Confirmed crash: even though the target was a proper
+/// component-backed node (not a raw Collision node like the earlier
+/// clickChild crash) and the event type itself needed no real coordinate
+/// data, routing it through the component's own ReceiveEvent still crashed
+/// the game. Root cause, found afterward by reading ECommons' own
+/// Automation/UIInput helpers and FFXIVClientStructs' AtkEventData: native
+/// ReceiveEvent takes a 4th <c>AtkEventData*</c> argument that clickNested
+/// always passed as null — for ListItemClick/ListItemDoubleClick specifically,
+/// that argument is a tagged union whose ListItemData variant carries the
+/// AtkComponentListItemRenderer* and index the native handler needs to know
+/// which row to act on; with it null, that handler likely dereferenced
+/// garbage. <see cref="LuaClickListItem"/> replaces it, building a real
+/// AtkEventData.ListItemData (via AtkComponentBase.GetComponentItemRendererById
+/// and the renderer's own ListItemIndex field) instead of passing null. This
+/// is still unverified against a real crash history on this exact screen —
+/// treat any new attempt with the same caution as before.
+/// </remarks>
+/// <remarks>
+/// The actual working technique for picking a XBMMonsterNotebook bestiary
+/// row (confirmed by reading erdelf/AutoDuty's own Crucible automation,
+/// 2026-09) turned out to be different from every attempt above: not
+/// ButtonClick/ListItemClick with real ListItemData, but a plain
+/// <c>MouseDown</c> event fired with a non-null pointer to a value-
+/// initialized (all-zero) <see cref="AtkEventData"/> — see
+/// <see cref="LuaClickMouseDown"/>. AutoDuty finds that event by recursively
+/// searching the ENTIRE node tree for an (EventType, Param) match rather
+/// than assuming it lives on any specific node, since it isn't on the
+/// addon's own top-level node list. This is a genuinely different, promising
+/// lead — still verify live before trusting it for real automation.
+/// </remarks>
 public sealed unsafe class LuaAutomationService
 {
     private readonly IObjectTable objectTable;
@@ -59,6 +94,8 @@ public sealed unsafe class LuaAutomationService
             script.Globals["target"] = (Action<string>)this.LuaTarget;
             script.Globals["interact"] = (Action)this.LuaInteract;
             script.Globals["click"] = (Action<string, uint>)this.LuaClick;
+            script.Globals["clickListItem"] = (Action<string, uint, uint, string, bool>)this.LuaClickListItem;
+            script.Globals["clickMouseDown"] = (Action<string, uint>)this.LuaClickMouseDown;
             script.Globals["callback"] = DynValue.NewCallback(this.LuaCallback);
             script.Globals["selectItem"] = (Action<string, uint, int>)this.LuaSelectItem;
             script.Globals["log"] = (Action<string>)(message => this.log.Information("[BeastHelper] Lua: {Message}", message));
@@ -217,6 +254,187 @@ public sealed unsafe class LuaAutomationService
         var evt = found is not null ? found : head;
         this.log.Information("[BeastHelper] Lua: click(\"{Addon}\", {Node}) replaying {EventType}.", addonName, nodeId, evt->State.EventType);
         addon->ReceiveEvent(evt->State.EventType, (int)evt->Param, evt);
+    }
+
+    /// <summary>
+    /// Clicks one row of a list component (e.g. XBMPetParty's beast list) by
+    /// replaying the named event with a real AtkEventData.ListItemData
+    /// populated — not null, and not a generic zeroed struct either. See
+    /// this class's own remarks for why: ListItemClick/ListItemDoubleClick's
+    /// native handler reads AtkEventData as an AtkListItemData carrying the
+    /// AtkComponentListItemRenderer* and index of the row that was hit, and
+    /// a prior version of this feature (clickNested) always passed null
+    /// there and crashed the game.
+    /// </summary>
+    /// <param name="addonName">The addon (e.g. "XBMPetParty").</param>
+    /// <param name="containerNodeId">The list's own top-level node id (e.g. 11).</param>
+    /// <param name="childNodeId">The specific row's node id within that list's own component scope (e.g. 41001).</param>
+    /// <param name="eventTypeName">Exact AtkEventType name to replay (e.g. "ListItemDoubleClick" or "ButtonClick") — no auto-priority search, since a row can have several plausible ones chained and guessing wrong could fire the wrong action.</param>
+    private void LuaClickListItem(string addonName, uint containerNodeId, uint childNodeId, string eventTypeName, bool dispatchToContainer = false)
+    {
+        var addon = this.FindAddon(addonName);
+        if (addon is null)
+        {
+            this.log.Information("[BeastHelper] Lua: clickListItem(\"{Addon}\", {Container}, {Child}, \"{EventType}\") — addon not found.", addonName, containerNodeId, childNodeId, eventTypeName);
+            return;
+        }
+
+        var containerNode = addon->GetNodeById(containerNodeId);
+        var containerComponent = containerNode is null ? null : containerNode->GetComponent();
+        if (containerComponent is null)
+        {
+            this.log.Information("[BeastHelper] Lua: clickListItem(\"{Addon}\", {Container}, {Child}, \"{EventType}\") — container not found or has no component.", addonName, containerNodeId, childNodeId, eventTypeName);
+            return;
+        }
+
+        // GetComponentItemRendererById didn't find rows by their own NodeId
+        // in practice (confirmed: returned null for a NodeId visibly present
+        // in the container's own node list) — so find the row node directly
+        // in the container's node list instead, and cast its component,
+        // the same way CrucibleLootService etc. already safely cast a
+        // node's component to AtkComponentButton*.
+        var childNode = FindNodeInComponent(containerComponent, childNodeId);
+        var itemRenderer = (AtkComponentListItemRenderer*)(childNode is null ? null : childNode->GetComponent());
+        if (itemRenderer is null)
+        {
+            this.log.Information("[BeastHelper] Lua: clickListItem(\"{Addon}\", {Container}, {Child}, \"{EventType}\") — child node not found, or has no component.", addonName, containerNodeId, childNodeId, eventTypeName);
+            return;
+        }
+
+        if (!Enum.TryParse<AtkEventType>(eventTypeName, out var wantedType))
+        {
+            this.log.Information("[BeastHelper] Lua: clickListItem — \"{EventType}\" isn't a known AtkEventType.", eventTypeName);
+            return;
+        }
+
+        var rendererComponent = &itemRenderer->AtkComponentButton.AtkComponentBase;
+        var ownerNode = rendererComponent->OwnerNode;
+        if (ownerNode is null)
+        {
+            this.log.Information("[BeastHelper] Lua: clickListItem(\"{Addon}\", {Container}, {Child}, \"{EventType}\") — item renderer has no owner node.", addonName, containerNodeId, childNodeId, eventTypeName);
+            return;
+        }
+
+        AtkEvent* found = null;
+        for (var evt = ownerNode->AtkResNode.AtkEventManager.Event; evt is not null; evt = evt->NextEvent)
+        {
+            if (evt->State.EventType == wantedType)
+            {
+                found = evt;
+                break;
+            }
+        }
+
+        if (found is null)
+        {
+            this.log.Information("[BeastHelper] Lua: clickListItem(\"{Addon}\", {Container}, {Child}) — event \"{EventType}\" not found on this row's chain.", addonName, containerNodeId, childNodeId, eventTypeName);
+            return;
+        }
+
+        var eventData = new AtkEventData();
+        eventData.ListItemData.ListItemRenderer = itemRenderer;
+        eventData.ListItemData.SelectedIndex = itemRenderer->ListItemIndex;
+        eventData.ListItemData.MouseButtonId = 0;
+        eventData.ListItemData.MouseModifier = ModifierFlag.None;
+
+        var dispatchTarget = dispatchToContainer ? containerComponent : rendererComponent;
+        this.log.Information(
+            "[BeastHelper] Lua: clickListItem(\"{Addon}\", {Container}, {Child}) replaying {EventType} on the {Target} (ListItemIndex={Index}) with a real AtkEventData.",
+            addonName,
+            containerNodeId,
+            childNodeId,
+            wantedType,
+            dispatchToContainer ? "container component" : "item renderer",
+            itemRenderer->ListItemIndex);
+        dispatchTarget->ReceiveEvent(found->State.EventType, (int)found->Param, found, &eventData);
+    }
+
+    /// <summary>
+    /// Replays a MouseDown event with a non-null, value-initialized (all
+    /// zero) <see cref="AtkEventData"/> — the technique erdelf/AutoDuty's
+    /// own Crucible bestiary-row picker uses (its <c>Notebook.PickEntry</c>:
+    /// a FireCallback to "select" the row, then this MouseDown replay to
+    /// actually register the click). Different from every earlier attempt
+    /// on this exact screen: not ButtonClick/ListItemClick, and the
+    /// AtkEventData pointer is valid (pointing at zeroed memory) rather than
+    /// null. Searches the whole node tree recursively for an event matching
+    /// (MouseDown, param), since it isn't necessarily on any specific node's
+    /// own event chain.
+    /// </summary>
+    private void LuaClickMouseDown(string addonName, uint param)
+    {
+        var addon = this.FindAddon(addonName);
+        if (addon is null)
+        {
+            this.log.Information("[BeastHelper] Lua: clickMouseDown(\"{Addon}\", {Param}) — addon not found.", addonName, param);
+            return;
+        }
+
+        var evt = FindEventInTree(&addon->UldManager, AtkEventType.MouseDown, param, 0);
+        if (evt is null)
+        {
+            this.log.Information("[BeastHelper] Lua: clickMouseDown(\"{Addon}\", {Param}) — no MouseDown event with that param found in the node tree.", addonName, param);
+            return;
+        }
+
+        var data = new AtkEventData();
+        this.log.Information("[BeastHelper] Lua: clickMouseDown(\"{Addon}\", {Param}) replaying MouseDown with a zeroed AtkEventData.", addonName, param);
+        addon->ReceiveEvent(AtkEventType.MouseDown, (int)param, evt, &data);
+    }
+
+    private static AtkEvent* FindEventInTree(AtkUldManager* uld, AtkEventType type, uint param, int depth)
+    {
+        if (uld is null || depth > 6)
+        {
+            return null;
+        }
+
+        for (var i = 0; i < uld->NodeListCount; i++)
+        {
+            var node = uld->NodeList[i];
+            if (node is null || !node->IsVisible())
+            {
+                continue;
+            }
+
+            for (var evt = node->AtkEventManager.Event; evt is not null; evt = evt->NextEvent)
+            {
+                if (evt->State.EventType == type && evt->Param == param)
+                {
+                    return evt;
+                }
+            }
+
+            var component = node->GetComponent();
+            if (component is null)
+            {
+                continue;
+            }
+
+            var found = FindEventInTree(&component->UldManager, type, param, depth + 1);
+            if (found is not null)
+            {
+                return found;
+            }
+        }
+
+        return null;
+    }
+
+    private static AtkResNode* FindNodeInComponent(AtkComponentBase* component, uint nodeId)
+    {
+        var nodeList = component->UldManager.NodeList;
+        var count = component->UldManager.NodeListCount;
+        for (var i = 0; i < count; i++)
+        {
+            var node = nodeList[i];
+            if (node is not null && node->NodeId == nodeId)
+            {
+                return node;
+            }
+        }
+
+        return null;
     }
 
     private static AtkEvent* FindClickEvent(AtkEvent* head)

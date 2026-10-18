@@ -6,6 +6,7 @@ using Dalamud.Memory;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI;
+using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 
@@ -111,6 +112,489 @@ public unsafe sealed class BeastTamingStateService
         };
         this.LastResult = result;
         return result;
+    }
+
+    // -------------------------------------------------------- detail panel --
+
+    private const string DetailAddonName = "XBMMonsterBookDetail";
+
+    /// <summary>
+    /// Opportunistically reads whichever beast's level/exp is currently shown
+    /// on the 図鑑 detail panel, if it happens to be open — never opens it,
+    /// never pages through the notebook itself. Call every tick; it's a
+    /// cheap no-op (one addon-visibility check) whenever the panel is
+    /// closed. Returns true if <see cref="Configuration.BeastLevelProgress"/>
+    /// actually changed and needs saving.
+    /// </summary>
+    /// <remarks>
+    /// EXP comes from <c>XBMMonsterBookDetail</c>'s officially-mapped struct
+    /// (<see cref="FFXIVClientStructs.FFXIV.Client.UI.AddonXBMMonsterBookDetail"/>):
+    /// <c>EntryExpGaugeBar</c>'s raw <c>Values[0].ValueInt</c>/<c>MaxValue</c>
+    /// give the gauge's true current/max with no text parsing, confirmed
+    /// correct by the user.
+    /// </remarks>
+    /// <remarks>
+    /// RANK took four attempts. It isn't in that struct at all — the three
+    /// candidate fields tried (<c>EntryExpCount</c>, <c>EntrySatietyCount</c>,
+    /// a shallow node-tree text scan) were all confirmed wrong or empty. A
+    /// full "Dump note addons to log" with the panel open showed RANK
+    /// actually lives in <c>XBMMonsterNotebook</c>'s own AtkValues (a
+    /// completely different addon from XBMMonsterBookDetail) as a bare
+    /// <c>ManagedString</c> ("11") a fixed few slots after the *second*
+    /// "No.&lt;n&gt;" marker in that array. The notebook's own grid also has
+    /// 25 "No.&lt;n&gt;" cells (one per row), but those are all plain
+    /// <c>String</c> type; only the currently-shown detail entry's marker is
+    /// <c>ManagedString</c>, which is what disambiguates it. The exact slot
+    /// offset from that marker to RANK isn't assumed fixed (a beast with a
+    /// different number of learnable actions would shift it) — instead RANK
+    /// is the first bare-integer <c>ManagedString</c> found scanning forward
+    /// from the marker, which in the confirmed dump was immediately followed
+    /// by HP ("608/608"), EXP text ("6/100"), EXP's own current/max as plain
+    /// UInts, and 満腹度 ("0/3"), in that order — a distinctive enough
+    /// neighborhood that a stray match is unlikely.
+    /// </remarks>
+    public bool TickDetailPanel()
+    {
+        var addon = this.FindAddon(DetailAddonName);
+        if (addon is null || !addon->IsVisible)
+        {
+            return false;
+        }
+
+        try
+        {
+            var detail = (AddonXBMMonsterBookDetail*)addon;
+            var noNode = detail->EntryNumberText;
+            if (noNode is null)
+            {
+                return false;
+            }
+
+            var noMatch = Regex.Match(noNode->NodeText.ToString(), @"\d+");
+            if (!noMatch.Success)
+            {
+                return false;
+            }
+
+            var no = uint.Parse(noMatch.Value);
+            BeastPetLike? pet = null;
+            foreach (var candidate in this.OrderedPets())
+            {
+                if (candidate.No == no)
+                {
+                    pet = candidate;
+                    break;
+                }
+            }
+
+            if (pet is null)
+            {
+                return false;
+            }
+
+            this.configuration.BeastLevelProgress.TryGetValue(pet.Value.PetRowId, out var existing);
+            var level = existing?.Level ?? 0;
+
+            var gaugeBar = detail->EntryExpGaugeBar;
+            if (gaugeBar is null)
+            {
+                return false;
+            }
+
+            var exp = gaugeBar->Values[0].ValueInt;
+            var maxExp = gaugeBar->MaxValue;
+
+            var rank = this.TryReadRankFromNotebook(no);
+            if (rank is not null)
+            {
+                level = rank.Value;
+            }
+
+            var updated = new BeastProgress { Level = level, Exp = exp, MaxExp = maxExp };
+            if (updated == existing)
+            {
+                return false;
+            }
+
+            this.configuration.BeastLevelProgress[pet.Value.PetRowId] = updated;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            this.log.Debug(ex, "[BeastHelper] Beast detail-panel progress read failed.");
+            return false;
+        }
+    }
+
+    private int? TryReadRankFromNotebook(uint no)
+    {
+        var notebook = this.FindAddon("XBMMonsterNotebook");
+        if (notebook is null)
+        {
+            return null;
+        }
+
+        var values = ReadAtkValues(notebook);
+        var wantedMarker = $"No.{no} ";
+        var markerIndex = -1;
+        for (var i = 0; i < values.Count; i++)
+        {
+            // The grid's own 25 row markers are plain "String"; only the
+            // currently-shown detail entry's marker is "ManagedString" —
+            // that's what tells the two apart.
+            if (values[i].Type.Equals("ManagedString", StringComparison.Ordinal)
+                && string.Equals((values[i].Text ?? string.Empty).Trim(), wantedMarker.Trim(), StringComparison.Ordinal))
+            {
+                markerIndex = i;
+                break;
+            }
+        }
+
+        if (markerIndex < 0)
+        {
+            return null;
+        }
+
+        for (var i = markerIndex + 2; i < values.Count && i < markerIndex + 60; i++)
+        {
+            if (values[i].Type.Equals("ManagedString", StringComparison.Ordinal)
+                && Regex.IsMatch(values[i].Text ?? string.Empty, @"^\s*\d+\s*$"))
+            {
+                return int.Parse(values[i].Text!.Trim());
+            }
+        }
+
+        return null;
+    }
+
+    // ------------------------------------------------- notebook auto-sync (level/exp) --
+
+    private const int NotebookPageValueIndex = 10;
+    private const int NotebookNumberIndex = 229;
+    private const int NotebookIconIndex = 231;
+    private const int NotebookLevelIndex = 258;
+    private const int NotebookExpIndex = 261;
+    private const int NotebookExpRequiredIndex = 262;
+    private const int NotebookEntriesPerPage = 25;
+    private const int NotebookPageCount = 2;
+    private const uint NotebookIconBase = 242000;
+    private const long NotebookScanTimeoutMs = 20000;
+
+    private bool notebookWasOpen;
+    private bool notebookScanning;
+    private long notebookScanStartedAt;
+    private long notebookNextActionAt;
+    private int notebookMemberIndex;
+    private bool notebookSelectSent;
+    private string notebookPendingSnapshot = string.Empty;
+    private string notebookStableSnapshot = string.Empty;
+
+    /// <summary>Short human status for the main window.</summary>
+    public string NotebookSyncStatus { get; private set; } = "off";
+
+    /// <summary>
+    /// Whenever 魔獣手帳 transitions from closed to open, automatically pages
+    /// through both of its pages and selects each of the 50 entries in turn
+    /// to read every beast's level/exp — the same underlying indices
+    /// <see cref="TryReadRankFromNotebook"/> already reads passively, just
+    /// driven instead of waited for. Selection uses a small, semantic
+    /// ReceiveEvent call to the notebook's own agent (AgentId 500, event
+    /// kind 0, args [5, pageIndex]) — the exact technique confirmed safe by
+    /// BOCXIV/Beastmaster-JP's own BeastmasterNotebookSyncService and
+    /// BeastmasterPetPartyService, not a raw UI click replay. Page flips use
+    /// the addon's own FireCallback, the same mechanism already used
+    /// elsewhere in this codebase (e.g. CrucibleEntryService's dialogue
+    /// choice). Call every tick; cheap no-op when the notebook is closed.
+    /// Returns true if <see cref="Configuration.BeastLevelProgress"/>
+    /// actually changed and needs saving.
+    /// </summary>
+    public bool TickNotebookAutoSync()
+    {
+        var addon = this.FindAddon("XBMMonsterNotebook");
+        var isOpen = addon is not null && addon->IsVisible;
+
+        if (!isOpen)
+        {
+            if (this.notebookScanning)
+            {
+                this.notebookScanning = false;
+                this.NotebookSyncStatus = "中断(手帳が閉じられました)";
+            }
+
+            this.notebookWasOpen = false;
+            return false;
+        }
+
+        if (!this.notebookWasOpen)
+        {
+            this.notebookWasOpen = true;
+            this.notebookMemberIndex = 0;
+            this.notebookSelectSent = false;
+            this.notebookPendingSnapshot = string.Empty;
+            this.notebookStableSnapshot = string.Empty;
+            this.notebookScanStartedAt = Environment.TickCount64;
+            this.notebookNextActionAt = 0;
+            this.notebookScanning = true;
+            this.NotebookSyncStatus = "自動同期中…";
+        }
+
+        if (!this.notebookScanning)
+        {
+            return false;
+        }
+
+        return this.AdvanceNotebookScan(addon);
+    }
+
+    private bool AdvanceNotebookScan(AtkUnitBase* addon)
+    {
+        if (Environment.TickCount64 - this.notebookScanStartedAt >= NotebookScanTimeoutMs)
+        {
+            this.notebookScanning = false;
+            this.NotebookSyncStatus = $"タイムアウト({this.notebookMemberIndex}/{NotebookEntriesPerPage * NotebookPageCount}体まで読み込み)";
+            return false;
+        }
+
+        if (this.notebookMemberIndex >= NotebookEntriesPerPage * NotebookPageCount)
+        {
+            this.notebookScanning = false;
+            this.NotebookSyncStatus = $"完了({this.notebookMemberIndex}体)";
+            return false;
+        }
+
+        var values = ReadAtkValues(addon);
+        if (values.Count <= NotebookExpRequiredIndex)
+        {
+            return false;
+        }
+
+        var pageValue = values[NotebookPageValueIndex];
+        if (pageValue.Number is not (0 or 1))
+        {
+            return false;
+        }
+
+        var page = (int)pageValue.Number;
+        var targetPage = this.notebookMemberIndex / NotebookEntriesPerPage;
+        if (page != targetPage)
+        {
+            this.notebookSelectSent = false;
+            this.notebookPendingSnapshot = string.Empty;
+            this.notebookStableSnapshot = string.Empty;
+            if (Environment.TickCount64 >= this.notebookNextActionAt)
+            {
+                RequestNotebookPage(addon, (uint)targetPage);
+                this.notebookNextActionAt = Environment.TickCount64 + 200;
+                this.NotebookSyncStatus = $"第{targetPage + 1}ページへ移動中…";
+            }
+
+            return false;
+        }
+
+        var pageIndex = this.notebookMemberIndex % NotebookEntriesPerPage;
+        if (!this.notebookSelectSent && Environment.TickCount64 >= this.notebookNextActionAt)
+        {
+            SendNotebookSelectEvent((uint)pageIndex);
+            this.notebookSelectSent = true;
+            this.notebookNextActionAt = Environment.TickCount64 + 100;
+        }
+
+        var expectedNo = (uint)(this.notebookMemberIndex + 1);
+        var no = (uint)values[NotebookNumberIndex].Number;
+        var icon = (uint)values[NotebookIconIndex].Number;
+        if (no != expectedNo || icon != NotebookIconBase + expectedNo)
+        {
+            return false;
+        }
+
+        var level = (int)values[NotebookLevelIndex].Number;
+        if (level is < 1 or > 25)
+        {
+            return false;
+        }
+
+        var exp = (int)values[NotebookExpIndex].Number;
+        var expRequired = (int)values[NotebookExpRequiredIndex].Number;
+        if (level == 25)
+        {
+            exp = 0;
+            expRequired = 0;
+        }
+        else if (expRequired is < 1 or > 999999 || exp >= expRequired)
+        {
+            return false;
+        }
+
+        // Require the same reading twice in a row before trusting it — the
+        // UI is still mid-transition for a frame or two right after the
+        // select event lands.
+        var snapshot = $"{no}:{level}:{exp}:{expRequired}";
+        if (snapshot != this.notebookPendingSnapshot)
+        {
+            this.notebookPendingSnapshot = snapshot;
+            this.notebookStableSnapshot = string.Empty;
+            return false;
+        }
+
+        if (snapshot == this.notebookStableSnapshot)
+        {
+            return false;
+        }
+
+        this.notebookStableSnapshot = snapshot;
+
+        BeastPetLike? pet = null;
+        foreach (var candidate in this.OrderedPets())
+        {
+            if (candidate.No == no)
+            {
+                pet = candidate;
+                break;
+            }
+        }
+
+        this.notebookMemberIndex++;
+        this.notebookSelectSent = false;
+        this.notebookPendingSnapshot = string.Empty;
+        this.notebookStableSnapshot = string.Empty;
+        this.notebookNextActionAt = 0;
+        this.NotebookSyncStatus = $"読込中 {this.notebookMemberIndex}/{NotebookEntriesPerPage * NotebookPageCount}体…";
+
+        if (pet is null)
+        {
+            return false;
+        }
+
+        var updated = new BeastProgress { Level = level, Exp = exp, MaxExp = expRequired };
+        this.configuration.BeastLevelProgress.TryGetValue(pet.Value.PetRowId, out var existing);
+        if (updated == existing)
+        {
+            return false;
+        }
+
+        this.configuration.BeastLevelProgress[pet.Value.PetRowId] = updated;
+        return true;
+    }
+
+    private static void RequestNotebookPage(AtkUnitBase* addon, uint page)
+    {
+        var values = stackalloc AtkValue[2];
+        values[0] = new AtkValue { Type = (AtkValueType)3, Int = 3 };
+        values[1] = new AtkValue { Type = (AtkValueType)5, UInt = page };
+        addon->FireCallback(2, values, true);
+    }
+
+    private static void SendNotebookSelectEvent(uint pageIndex)
+    {
+        var module = AgentModule.Instance();
+        var agent = module == null ? null : module->GetAgentByInternalId((AgentId)500);
+        if (agent == null)
+        {
+            return;
+        }
+
+        var args = stackalloc AtkValue[2];
+        args[0] = new AtkValue { Type = (AtkValueType)3, Int = 5 };
+        args[1] = new AtkValue { Type = (AtkValueType)3, Int = (int)pageIndex };
+        var result = new AtkValue();
+        agent->ReceiveEvent(&result, args, 2, 0);
+    }
+
+    // ------------------------------------------------ party rank (passive) --
+
+    private const uint PartyTeamListNodeId = 11;
+    private const uint PartyRowNameTextId = 17;
+    private const uint PartyRowRankTextId = 9;
+
+    /// <summary>
+    /// Passively reads RANK for whichever beasts are currently in the party
+    /// on 呼び笛の設定 (XBMPetParty) straight from that screen's own already-
+    /// open UI — never opens anything itself, just reads whatever's already
+    /// visible whenever the player (or CruciblePetPartyService) has this
+    /// screen up anyway. Ported (as a technique) from erdelf/AutoDuty's own
+    /// CrucibleUi.Team(): the party list is AtkComponentList NodeId 11
+    /// (confirmed independently by a second community plugin, FFXIVPetRenamer,
+    /// which reads the same list for an unrelated reason), each row an
+    /// AtkComponentListItemRenderer whose own text node 17 holds the beast's
+    /// name and node 9 its rank. Matched against name here instead of
+    /// AutoDuty's own scan-and-remember cache, since BeastDataService's
+    /// Lumina-loaded names are already on hand. EXP isn't shown on this
+    /// screen — only the notebook detail panel has it (see
+    /// <see cref="TickDetailPanel"/>) — so this only ever updates Level.
+    /// </summary>
+    public bool TickPartyRanks()
+    {
+        var addon = this.FindAddon("XBMPetParty");
+        if (addon is null || !addon->IsVisible)
+        {
+            return false;
+        }
+
+        var listNode = addon->GetNodeById(PartyTeamListNodeId);
+        var list = (AtkComponentList*)(listNode is null ? null : listNode->GetComponent());
+        if (list is null)
+        {
+            return false;
+        }
+
+        var changed = false;
+        for (var i = 0; i < list->ListLength; i++)
+        {
+            var renderer = list->GetItemRenderer(i);
+            if (renderer is null)
+            {
+                break;
+            }
+
+            var uld = &((AtkComponentBase*)renderer)->UldManager;
+            var name = ReadNodeText(uld, PartyRowNameTextId);
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                break;
+            }
+
+            var rankMatch = Regex.Match(ReadNodeText(uld, PartyRowRankTextId), @"\d+");
+            if (!rankMatch.Success)
+            {
+                continue;
+            }
+
+            var level = int.Parse(rankMatch.Value);
+            var pet = this.beastData.Pets.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.Ordinal));
+            if (pet is null)
+            {
+                continue;
+            }
+
+            this.configuration.BeastLevelProgress.TryGetValue(pet.PetRowId, out var existing);
+            var updated = existing is null
+                ? new BeastProgress { Level = level, Exp = 0, MaxExp = 0 }
+                : existing with { Level = level };
+
+            if (updated != existing)
+            {
+                this.configuration.BeastLevelProgress[pet.PetRowId] = updated;
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
+    private static string ReadNodeText(AtkUldManager* uld, uint nodeId)
+    {
+        var nodeList = uld->NodeList;
+        var count = uld->NodeListCount;
+        for (var i = 0; i < count; i++)
+        {
+            var node = nodeList[i];
+            if (node is not null && node->NodeId == nodeId && node->Type == NodeType.Text)
+            {
+                return ((AtkTextNode*)node)->NodeText.ToString().Trim();
+            }
+        }
+
+        return string.Empty;
     }
 
     // -------------------------------------------------------------- xbmmanager --
@@ -718,16 +1202,20 @@ public unsafe sealed class BeastTamingStateService
             {
                 var textNode = (AtkTextNode*)node;
                 var text = textNode->NodeText.ToString();
-                if (!string.IsNullOrWhiteSpace(text))
-                {
-                    lines.Add($"{indent}text#{node->NodeId} '{text.Replace('\n', ' ')}'");
-                }
-
+                lines.Add(string.IsNullOrWhiteSpace(text)
+                    ? $"{indent}text#{node->NodeId} <empty> visible={node->IsVisible()} pos=({node->X:0},{node->Y:0})"
+                    : $"{indent}text#{node->NodeId} '{text.Replace('\n', ' ')}'");
                 continue;
             }
 
             if (typeValue < 1000)
             {
+                // A raw, non-component, non-text node (Image, NineGrid,
+                // Counter, Collision, Res, ...) — e.g. FFXIV often renders a
+                // stylized stat number as a digit-texture NineGrid/Counter
+                // rather than plain text, which would otherwise vanish from
+                // this dump entirely. Logged so those aren't silently lost.
+                lines.Add($"{indent}node#{node->NodeId} type={node->Type} visible={node->IsVisible()} pos=({node->X:0},{node->Y:0}) size=({node->Width}x{node->Height})");
                 continue;
             }
 

@@ -39,6 +39,8 @@ public sealed class Plugin : IDalamudPlugin
     private readonly CrucibleLootService crucibleLoot;
     private readonly CrucibleResultService crucibleResult;
     private readonly CrucibleTreasureService crucibleTreasure;
+    private readonly CruciblePetPartyService cruciblePetParty;
+    private readonly CrucibleAutoDutyIpcService crucibleAutoDuty;
     private readonly CrucibleShopService crucibleShop;
     private readonly CrucibleLoopService crucibleLoop;
     private readonly QuestionableIpcService questionable;
@@ -46,6 +48,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly LuaAutomationService luaAutomation;
     private readonly LuaRecorderService luaRecorder;
     private readonly NearbyObjectDumpService nearbyObjectDump;
+    private readonly AddonNodeDumpService addonNodeDump;
     private readonly MainWindow mainWindow;
     private readonly DebugWindow debugWindow;
     private BeastDestination? pendingDestination;
@@ -54,6 +57,7 @@ public sealed class Plugin : IDalamudPlugin
     private DateTime? pendingMoveDeadline;
     private DateTime? nextMountAttempt;
     private DateTime nextAutoNoteSync = DateTime.MinValue;
+    private bool wasCrucibleAutoDutyModeEnabled;
 
     public Plugin(
         IDalamudPluginInterface pluginInterface,
@@ -147,16 +151,19 @@ public sealed class Plugin : IDalamudPlugin
         this.luaAutomation = new LuaAutomationService(objectTable, targetManager, this.gameGui, log);
         this.luaRecorder = new LuaRecorderService(gameInterop, log);
         this.nearbyObjectDump = new NearbyObjectDumpService(objectTable, log);
+        this.addonNodeDump = new AddonNodeDumpService(this.gameGui, log);
         this.crucibleBoard = new CrucibleBoardService(this.configuration, this.gameGui, this.luaAutomation, log);
         this.crucibleReadyCheck = new CrucibleReadyCheckService(this.configuration, this.gameGui, log);
         this.crucibleCombat = new CrucibleCombatService(this.configuration, objectTable, condition, this.clientState, commandManager, this.navmesh, pluginInterface, log);
-        this.crucibleRecoveryItem = new CrucibleRecoveryItemService(this.configuration, objectTable, condition, this.clientState, sigScanner, log);
+        this.crucibleRecoveryItem = new CrucibleRecoveryItemService(this.configuration, objectTable, targetManager, condition, this.clientState, sigScanner, log);
         this.crucibleLoot = new CrucibleLootService(this.configuration, this.gameGui, log);
         this.crucibleResult = new CrucibleResultService(this.configuration, this.gameGui, log);
         this.crucibleTreasure = new CrucibleTreasureService(this.configuration, this.gameGui, log);
+        this.cruciblePetParty = new CruciblePetPartyService(this.configuration, this.beastData, this.gameGui, log);
         this.crucibleShop = new CrucibleShopService(this.configuration, this.gameGui, log);
         this.crucibleLoop = new CrucibleLoopService(this.configuration, this.SaveConfiguration, log);
         this.questionable = new QuestionableIpcService(pluginInterface, log);
+        this.crucibleAutoDuty = new CrucibleAutoDutyIpcService(pluginInterface, log);
         this.crucibleEntry = new CrucibleEntryService(this.configuration, this.clientState, objectTable, this.gameGui, this.navmesh, this.questionable, log);
 
         this.clientState.TerritoryChanged += this.OnTerritoryChanged;
@@ -176,6 +183,8 @@ public sealed class Plugin : IDalamudPlugin
             this.crucibleLoot,
             this.crucibleResult,
             this.crucibleTreasure,
+            this.cruciblePetParty,
+            this.crucibleAutoDuty,
             this.crucibleShop,
             this.crucibleLoop,
             this.crucibleEntry,
@@ -187,7 +196,7 @@ public sealed class Plugin : IDalamudPlugin
 
         // The main window always starts closed. It is only shown on an explicit
         // /beasthelper, the title-bar / config button, or the plugin installer.
-        this.debugWindow = new DebugWindow(this.tamingState, this.luaAutomation, this.luaRecorder, this.nearbyObjectDump);
+        this.debugWindow = new DebugWindow(this.tamingState, this.luaAutomation, this.luaRecorder, this.nearbyObjectDump, this.addonNodeDump);
 
         this.windowSystem.AddWindow(this.mainWindow);
         this.windowSystem.AddWindow(this.debugWindow);
@@ -348,26 +357,68 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         this.bossModDodge.Tick();
-        this.crucibleBoard.Tick();
-        this.crucibleReadyCheck.Tick();
-        this.crucibleCombat.Tick();
-        this.crucibleRecoveryItem.Tick();
-        this.crucibleResult.Tick();
-        this.crucibleTreasure.Tick();
-        this.crucibleShop.Tick();
-        this.crucibleLoot.Tick();
-        this.luaAutomation.Tick();
 
-        // Don't fight the player's own manual "Move" for control of vnavmesh.
-        if (this.pendingDestination is null)
+        var autoDutyModeActive = this.configuration.CrucibleAutoDutyModeEnabled && this.configuration.AutoEnterCrucibleEnabled;
+        if (autoDutyModeActive && !this.wasCrucibleAutoDutyModeEnabled)
         {
-            this.crucibleEntry.Tick();
+            if (ResolveCrucibleBoardTerritory(this.configuration.SelectedCrucibleBoard) is { } territoryType)
+            {
+                this.crucibleAutoDuty.Run(territoryType, this.configuration.CrucibleLoopCount);
+            }
+            else
+            {
+                this.log.Warning("[BeastHelper] AutoDuty mode: unknown board \"{Board}\"; not starting AutoDuty.", this.configuration.SelectedCrucibleBoard);
+            }
+        }
+        else if (!autoDutyModeActive && this.wasCrucibleAutoDutyModeEnabled)
+        {
+            this.crucibleAutoDuty.Stop();
         }
 
-        this.crucibleLoop.Tick(this.crucibleEntry.NpcDetected);
+        this.wasCrucibleAutoDutyModeEnabled = autoDutyModeActive;
+
+        if (autoDutyModeActive)
+        {
+            // AutoDuty's own Crucible automation covers this ground already;
+            // running both at once would have them fight over the same UI.
+            this.crucibleAutoDuty.Tick();
+        }
+        else
+        {
+            this.crucibleBoard.Tick();
+            this.crucibleReadyCheck.Tick();
+            this.crucibleCombat.Tick();
+            this.crucibleRecoveryItem.Tick();
+            this.crucibleResult.Tick();
+            this.crucibleTreasure.Tick();
+            this.cruciblePetParty.Tick();
+            this.cruciblePetParty.TickWhistleAssignment();
+            this.crucibleShop.Tick();
+            this.crucibleLoot.Tick();
+
+            // Don't fight the player's own manual "Move" for control of vnavmesh.
+            if (this.pendingDestination is null)
+            {
+                this.crucibleEntry.Tick();
+            }
+
+            this.crucibleLoop.Tick(this.crucibleEntry.NpcDetected);
+        }
+
+        this.luaAutomation.Tick();
 
         this.TryAutoSyncBeastNote();
     }
+
+    private static uint? ResolveCrucibleBoardTerritory(string boardName) => boardName switch
+    {
+        "第一盤" => 1339u,
+        "第二盤" => 1340u,
+        "第三盤" => 1341u,
+        "特一盤" => 1342u,
+        "特二盤" => 1343u,
+        _ => null,
+    };
 
     private void UpdatePendingMove()
     {
@@ -438,9 +489,29 @@ public sealed class Plugin : IDalamudPlugin
 
     private void TryAutoSyncBeastNote()
     {
-        if (!this.configuration.AutoSyncBeastNote || !this.clientState.IsLoggedIn)
+        if (!this.clientState.IsLoggedIn)
         {
             return;
+        }
+
+        if (this.configuration.AutoSyncBeastLevelEnabled && this.tamingState.TickNotebookAutoSync())
+        {
+            this.SaveConfiguration();
+        }
+
+        if (this.tamingState.TickPartyRanks())
+        {
+            this.SaveConfiguration();
+        }
+
+        if (!this.configuration.AutoSyncBeastNote)
+        {
+            return;
+        }
+
+        if (this.tamingState.TickDetailPanel())
+        {
+            this.SaveConfiguration();
         }
 
         var now = DateTime.UtcNow;
