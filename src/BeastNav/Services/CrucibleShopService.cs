@@ -47,6 +47,11 @@ public sealed unsafe class CrucibleShopService
     private DateTime nextCloseAttempt = DateTime.MinValue;
     private DateTime nextConfirmAttempt = DateTime.MinValue;
 
+    // The confirm is only answered right after this service clicked its own
+    // button, so a SelectYesno with similar text from anything else is never touched.
+    private static readonly TimeSpan ConfirmWindow = TimeSpan.FromSeconds(5);
+    private DateTime lastOwnClick = DateTime.MinValue;
+
     public CrucibleShopService(Configuration configuration, IGameGui gameGui, IPluginLog log)
     {
         this.configuration = configuration;
@@ -125,6 +130,7 @@ public sealed unsafe class CrucibleShopService
         }
 
         this.nextCloseAttempt = now + CloseThrottle;
+        this.lastOwnClick = now;
         this.Status = "何も買わずに終了をクリック";
         this.log.Information("[BeastHelper] Crucible shop: clicked 終了.");
     }
@@ -137,6 +143,11 @@ public sealed unsafe class CrucibleShopService
     /// </summary>
     private bool TryConfirmClose()
     {
+        if (DateTime.UtcNow - this.lastOwnClick > ConfirmWindow)
+        {
+            return false;
+        }
+
         AtkUnitBase* addon;
         try
         {

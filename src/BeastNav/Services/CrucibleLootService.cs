@@ -37,6 +37,11 @@ public sealed unsafe class CrucibleLootService
     private DateTime nextClaimAttempt = DateTime.MinValue;
     private DateTime nextConfirmAttempt = DateTime.MinValue;
 
+    // The confirm is only answered right after this service clicked its own
+    // button, so a SelectYesno with similar text from anything else is never touched.
+    private static readonly TimeSpan ConfirmWindow = TimeSpan.FromSeconds(5);
+    private DateTime lastOwnClick = DateTime.MinValue;
+
     public CrucibleLootService(Configuration configuration, IGameGui gameGui, IPluginLog log)
     {
         this.configuration = configuration;
@@ -115,6 +120,7 @@ public sealed unsafe class CrucibleLootService
         }
 
         this.nextClaimAttempt = now + ClaimThrottle;
+        this.lastOwnClick = now;
         this.Status = "すべて入手をクリック";
         this.log.Information("[BeastHelper] Crucible loot: clicked すべて入手.");
     }
@@ -127,6 +133,11 @@ public sealed unsafe class CrucibleLootService
     /// </summary>
     private bool TryConfirmClaim()
     {
+        if (DateTime.UtcNow - this.lastOwnClick > ConfirmWindow)
+        {
+            return false;
+        }
+
         AtkUnitBase* addon;
         try
         {

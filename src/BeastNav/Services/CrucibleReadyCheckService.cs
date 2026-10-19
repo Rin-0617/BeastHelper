@@ -1,5 +1,7 @@
 using Dalamud.Plugin.Services;
+using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.UI;
+using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 
 namespace BeastNav.Services;
@@ -15,9 +17,10 @@ namespace BeastNav.Services;
 /// </summary>
 /// <remarks>
 /// ContentsFinderConfirm is the game's shared ready-check addon for every
-/// queued duty, not just Crucible — while <see cref="Configuration.AutoEnterCrucibleEnabled"/>
-/// is on, this will also auto-commence into anything else the character
-/// happens to be queued for at the same time.
+/// queued duty, not just Crucible. So the button is only clicked when the
+/// popped duty (<c>ContentsFinder.QueueInfo.PoppedQueueEntry</c>) is one of
+/// the Crucible boards (ContentFinderCondition 1088–1092). Any other duty,
+/// a roulette, or an unreadable entry is left for the player to accept.
 /// </remarks>
 /// <remarks>
 /// Unattended UI interaction — against the FFXIV ToS, self-responsibility.
@@ -26,6 +29,10 @@ namespace BeastNav.Services;
 public sealed unsafe class CrucibleReadyCheckService
 {
     private const string ConfirmAddonName = "ContentsFinderConfirm";
+
+    // 闘獣練 第一盤〜特二盤 (ContentFinderCondition rows).
+    private const uint CrucibleConditionMin = 1088;
+    private const uint CrucibleConditionMax = 1092;
     private static readonly TimeSpan Throttle = TimeSpan.FromSeconds(1.5);
 
     private readonly Configuration configuration;
@@ -75,6 +82,12 @@ public sealed unsafe class CrucibleReadyCheckService
             return;
         }
 
+        if (!IsCruciblePopped())
+        {
+            this.Status = "闘獣練以外の突入確認（押しません）";
+            return;
+        }
+
         var confirm = (AddonContentsFinderConfirm*)addon;
         var button = confirm->CommenceButton;
         if (button is null)
@@ -95,5 +108,19 @@ public sealed unsafe class CrucibleReadyCheckService
         this.nextAttempt = now + Throttle;
         this.Status = "突入をクリック";
         this.log.Information("[BeastHelper] Crucible ready check: clicked 突入.");
+    }
+
+    /// <summary>The ready check is for a Crucible board. Anything else (or unknown) returns false.</summary>
+    private static bool IsCruciblePopped()
+    {
+        var finder = ContentsFinder.Instance();
+        if (finder is null)
+        {
+            return false;
+        }
+
+        var popped = finder->QueueInfo.PoppedQueueEntry;
+        return popped.ContentType == ContentsType.Regular
+            && popped.Id is >= CrucibleConditionMin and <= CrucibleConditionMax;
     }
 }
