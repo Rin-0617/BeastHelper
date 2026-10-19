@@ -31,6 +31,13 @@ namespace BeastNav.Services;
 /// testing.
 /// </remarks>
 /// <remarks>
+/// The preset is only ever active inside the Crucible arena territories
+/// (1339–1343). Anywhere else it's cleared — even a "BeastHelper Dodge"
+/// preset left active by an older version — because BMR's NormalMovement
+/// would otherwise dodge on its own in any fight BMR has a module for
+/// (e.g. an Ultimate), moving the character against the player's will.
+/// </remarks>
+/// <remarks>
 /// Also sets NormalMovement's Range track to "MaxRange" (stay within melee
 /// range of the target while dodging, instead of the default "Any" which
 /// paths straight to the safest spot regardless of range and constantly
@@ -56,14 +63,22 @@ public sealed class BossModDodgeService
 
     private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(2);
 
+    // 第一盤〜特二盤 — the same range CrucibleCombatService uses.
+    private const uint ArenaTerritoryMin = 1339;
+    private const uint ArenaTerritoryMax = 1343;
+
+    private readonly IClientState clientState;
+    private DateTime nextOutsideCheck = DateTime.MinValue;
+
     private bool weActivatedIt;
     private bool? lastAppliedInCombat;
     private bool desiredEnabled;
     private DateTime nextRetry = DateTime.MinValue;
 
-    public BossModDodgeService(IDalamudPluginInterface pluginInterface, ICondition condition, IPluginLog log)
+    public BossModDodgeService(IDalamudPluginInterface pluginInterface, ICondition condition, IClientState clientState, IPluginLog log)
     {
         this.condition = condition;
+        this.clientState = clientState;
         this.log = log;
         this.hasActiveModule = pluginInterface.GetIpcSubscriber<bool>("BossMod.HasActiveModule");
         this.presetsCreate = pluginInterface.GetIpcSubscriber<string, bool, bool>("BossMod.Presets.Create");
@@ -101,8 +116,11 @@ public sealed class BossModDodgeService
             return;
         }
 
-        this.TryEnable();
+        // Only remember the wish here; Tick() activates the preset once inside an arena.
+        this.Status = "on (闘獣練の会場でのみ有効)";
     }
+
+    private bool InArena => this.clientState.TerritoryType is >= ArenaTerritoryMin and <= ArenaTerritoryMax;
 
     /// <summary>
     /// Attempts to enable, tolerating BMR's IPC not being registered yet —
@@ -195,6 +213,12 @@ public sealed class BossModDodgeService
     /// </summary>
     public void Tick()
     {
+        if (!this.InArena)
+        {
+            this.ClearOutsideArena();
+            return;
+        }
+
         if (!this.weActivatedIt)
         {
             if (this.desiredEnabled && DateTime.UtcNow >= this.nextRetry)
@@ -223,6 +247,31 @@ public sealed class BossModDodgeService
         this.presetsAddTransientStrategy.InvokeFunc(PresetName, NormalMovementModule, "Destination", inCombat ? "Pathfind" : "None");
         this.lastAppliedInCombat = inCombat;
         this.Status = inCombat ? "on (回避中)" : (this.HasActiveModule ? "on" : "on (戦闘外は待機)");
+    }
+
+    /// <summary>
+    /// Outside the arenas the preset must never stay active. Also clears a
+    /// "BeastHelper Dodge" preset that an older version left active in BMR,
+    /// which this session didn't activate itself. Checked every couple of
+    /// seconds rather than every frame to keep IPC traffic low.
+    /// </summary>
+    private void ClearOutsideArena()
+    {
+        if (DateTime.UtcNow < this.nextOutsideCheck)
+        {
+            return;
+        }
+
+        this.nextOutsideCheck = DateTime.UtcNow + RetryInterval;
+        if (this.Safe(() => this.presetsGetActive.InvokeFunc(), null) == PresetName)
+        {
+            this.Safe(() => this.presetsClearActive.InvokeFunc(), false);
+            this.log.Information("[BeastHelper] BossMod dodge preset cleared outside the Crucible arena.");
+        }
+
+        this.weActivatedIt = false;
+        this.lastAppliedInCombat = null;
+        this.Status = this.desiredEnabled ? "on (闘獣練の会場でのみ有効)" : "off";
     }
 
     private T Safe<T>(Func<T> query, T fallback)

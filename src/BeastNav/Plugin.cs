@@ -138,7 +138,7 @@ public sealed class Plugin : IDalamudPlugin
         this.teleport = new TeleportService(aetherytes, log);
         this.mount = new MountService(log);
         this.tamingState = new BeastTamingStateService(this.gameGui, this.beastData, this.configuration, log);
-        this.bossModDodge = new BossModDodgeService(pluginInterface, condition, log);
+        this.bossModDodge = new BossModDodgeService(pluginInterface, condition, this.clientState, log);
         if (this.configuration.BossModDodgeEnabled)
         {
             this.bossModDodge.SetEnabled(true);
